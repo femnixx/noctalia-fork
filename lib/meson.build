@@ -39,7 +39,9 @@ if not _noctalia_ui_gles2_dep.found()
   _noctalia_ui_gles2_dep = dependency('epoxy')
 endif
 
-if not _noctalia_ui_cc.has_header('stb/stb_image_resize2.h')
+_noctalia_ui_inc = include_directories('.')
+
+if not _noctalia_ui_cc.has_header('stb/stb_image_resize2.h', include_directories: _noctalia_ui_inc)
   error('noctalia-ui: stb/stb_image_resize2.h not found')
 endif
 
@@ -243,7 +245,7 @@ if get_variable('noctalia_ui_build_codecs', false)
     _noctalia_ui_wuffs_inc = [include_directories('third_party/wuffs', is_system: true)]
   endif
 
-  if not _noctalia_ui_cc.has_header('stb/stb_image_write.h')
+  if not _noctalia_ui_cc.has_header('stb/stb_image_write.h', include_directories: _noctalia_ui_inc)
     error('noctalia-ui: stb/stb_image_write.h not found')
   endif
 

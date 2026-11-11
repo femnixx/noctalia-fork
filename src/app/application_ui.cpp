@@ -43,6 +43,7 @@
 #include "shell/session/session_panel.h"
 #include "shell/setup_wizard/setup_wizard_panel.h"
 #include "shell/test/test_panel.h"
+#include "shell/tabstrip/tabstrip_panel.h"
 #include "shell/tooltip/tooltip_manager.h"
 #include "shell/tray/tray_drawer_panel.h"
 #include "shell/wallpaper/panel/wallpaper_panel.h"
@@ -745,6 +746,7 @@ void Application::initPanelManagerAndPanels() {
                                  return m_polkitAgent.get();
                                }));
   m_panelManager.registerPanel("setup-wizard", std::make_unique<SetupWizardPanel>(&m_configService, &m_wayland));
+  m_panelManager.registerPanel("tab-strip", std::make_unique<tabstrip::TabStripPanel>(&m_configService));
 
   if (SetupWizardPanel::isFirstRun(m_configService)) {
     DeferredCall::callLater([] { PanelManager::instance().togglePanel("setup-wizard"); });

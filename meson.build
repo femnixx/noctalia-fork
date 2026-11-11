@@ -9,6 +9,8 @@ project('noctalia', ['c', 'cpp'],
   ],
 )
 
+add_project_arguments('-Ilib', language: 'cpp')
+
 cc  = meson.get_compiler('c')
 cpp = meson.get_compiler('cpp')
 
@@ -320,6 +322,7 @@ _noctalia_cpp_args = [
 # Self-contained; see lib/meson.build for its outputs.
 noctalia_ui_build_codecs = true
 noctalia_ui_system_wuffs = get_option('system_libraries')
+include_directories('src')
 subdir('lib')
 
 # ── Shell Wayland protocols ───────────────────────────────────────────────────
@@ -739,6 +742,7 @@ _noctalia_sources = files(
   'src/shell/settings/settings_window_scene.cpp',
   'src/shell/settings/settings_window.cpp',
   'src/shell/test/test_panel.cpp',
+  'src/shell/tabstrip/tabstrip_panel.cpp',
   'src/shell/tray/tray_drawer_panel.cpp',
   'src/shell/tray/tray_settings.cpp',
   'src/shell/tray/tray_menu.cpp',
@@ -1012,6 +1016,7 @@ endif
 # ── Include directories ────────────────────────────────────────────────────────
 _noctalia_inc = [
   include_directories('src'),
+  include_directories('lib'),
   # '.' adds both the source root and the corresponding build-dir root, so
   # generated protocol headers (written to the build root) are found by #include.
   include_directories('.'),
