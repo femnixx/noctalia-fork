@@ -58,6 +58,17 @@ if get_option('buildtype') == 'release'
   )
 endif
 
+# Use mold linker for faster linking and lower memory usage (if available)
+mold_dep = cpp.find_library('mold', required: false)
+if mold_dep.found()
+  add_project_link_arguments('-fuse-ld=mold', language: 'cpp')
+  # Limit mold threads to reduce peak memory (each thread uses significant memory)
+  add_project_link_arguments('-Wl,--thread-count=2', language: 'cpp')
+endif
+
+# Reduce linker memory usage: disable keeping all symbols in memory
+add_project_link_arguments('-Wl,--no-keep-memory', language: 'cpp')
+
 if get_option('native_optimizations')
   add_project_arguments('-march=native', '-mtune=native', language: ['c', 'cpp'])
 endif

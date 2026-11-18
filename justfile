@@ -13,6 +13,7 @@ configure m=mode install_prefix=prefix:
     set -euo pipefail
     args=(--buildtype={{ if m == "release" { "release" } else { "debug" } }} -Dcpp_std={{cpp-std}} -Dtests=auto)
     [[ "{{m}}" == "release" ]] && args+=(-Db_lto=true)
+    [[ "{{m}}" == "debug" ]] && args+=(-Db_lto=false)
     [[ "{{m}}" == "asan"    ]] && args+=(-Db_sanitize=address,undefined)
     if [[ -d "build-{{m}}" ]]; then
         meson setup "build-{{m}}" "${args[@]}" --prefix "{{install_prefix}}" --reconfigure
@@ -22,7 +23,7 @@ configure m=mode install_prefix=prefix:
     ln -sfn "build-{{m}}/compile_commands.json" compile_commands.json
 
 build m=mode: (_ensure-configured m)
-    meson compile -C build-{{m}} noctalia noctalia-pam-helper
+    meson compile -C build-{{m}} -j 2 noctalia noctalia-pam-helper
 
 _ensure-configured m=mode:
     #!/usr/bin/env bash
