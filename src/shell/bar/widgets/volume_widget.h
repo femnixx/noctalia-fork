@@ -12,6 +12,7 @@ class Glyph;
 class Image;
 class Label;
 class PipeWireService;
+class Slider;
 struct wl_output;
 
 enum class VolumeWidgetTarget {
@@ -31,6 +32,8 @@ public:
     bool showGlyph = true;
     bool showLabel = true;
     bool hideWhenInactive = false;
+    // Show an inline volume slider when there is enough horizontal space (e.g. expanded notch).
+    bool showSlider = false;
     GlyphPosition glyphPosition = GlyphPosition::Before;
     bool peek = false;
     int peekDelayMs = kBarRevealDelayMs;
@@ -47,11 +50,13 @@ private:
   void syncState(Renderer& renderer);
   void syncWidgetVisibility(bool showWidget);
   std::string glyphName(float volume, bool muted, const std::string& effectsProfile = {}) const;
+  void onSliderValueChanged(double value);
 
   PipeWireService* m_audio = nullptr;
   EasyEffectsService* m_easyEffects = nullptr;
   bool m_showGlyph = true;
   bool m_showLabel = true;
+  bool m_showSlider = false;
   VolumeWidgetTarget m_target = VolumeWidgetTarget::Output;
   ColorSpec m_muteColor;
   std::string m_glyphOverride;
@@ -64,6 +69,8 @@ private:
   Glyph* m_glyph = nullptr;
   Image* m_image = nullptr;
   Label* m_label = nullptr;
+  Slider* m_slider = nullptr;
+  std::uint32_t m_lastSinkId = 0;
   float m_lastVolume = -1.0F;
   std::string m_lastEffectsProfile;
   bool m_lastMuted = false;

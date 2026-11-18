@@ -457,6 +457,41 @@ end    = ["media", "tray", "notifications", "clipboard", "network", "bluetooth",
 # [bar.main.monitor.dp1.dead_zone.actions]
 # left = "panel-toggle launcher"
 
+# Dynamic Notch settings (experimental, top position only)
+dynamic_notch                = true        # Enable Dynamic Notch mode (centered pill instead of full-width bar)
+notch_collapsed_width        = 200         # Collapsed pill width in pixels
+notch_collapsed_height       = 32          # Collapsed pill height in pixels
+notch_expanded_width         = 880         # Expanded pill width in pixels
+notch_expanded_height        = 360         # Expanded pill height in pixels
+notch_collapsed_radius       = 14          # Collapsed corner radius
+notch_expanded_radius        = 24          # Expanded corner radius
+notch_top_margin             = 0           # Top margin from screen edge (0 for physical camera notches)
+notch_hover_expand           = true        # Expand on hover
+notch_click_expand           = true        # Expand on click
+notch_expand_delay_ms        = 0           # Zero delay on hover/click
+notch_collapse_delay_ms      = 180         # Debounce delay on pointer leave (ms)
+notch_auto_collapse_timeout_ms = 3500      # Auto-collapse after expand (ms), 0 = disabled
+# Widget slots for collapsed state
+notch_collapsed_start        = ["workspaces"]
+notch_collapsed_center       = ["media"]
+notch_collapsed_end          = ["clock", "battery"]
+# Widget slots for expanded state
+notch_expanded_start         = ["workspaces", "launcher"]
+notch_expanded_center        = ["media", "volume", "brightness"]
+notch_expanded_end           = ["notifications", "tray", "control-center", "session", "clock", "battery"]
+
+# Notch widget appearance overrides.
+# Playback controls and sliders only render when the widget has enough space
+# (expanded notch state); they stay hidden in the collapsed pill and regular bar.
+[widget.media]
+show_playback_controls = true
+
+[widget.volume]
+show_slider = true
+
+[widget.brightness]
+show_slider = true
+
 # ── Dock ──────────────────────────────────────────────────────────────────────
 
 [dock]

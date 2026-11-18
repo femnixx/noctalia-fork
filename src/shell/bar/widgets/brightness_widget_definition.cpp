@@ -26,6 +26,9 @@ const noctalia::bar::WidgetDefinition<BrightnessWidget::Options>& brightnessWidg
               field<&Options::showWhenUnavailable>({
                   .key = "show_when_unavailable",
               }),
+              field<&Options::showSlider>({
+                  .key = "show_slider",
+              }),
           },
       .validateOptions = [](const Options& options) -> std::optional<std::string> {
         if (!options.showGlyph && !options.showLabel) {

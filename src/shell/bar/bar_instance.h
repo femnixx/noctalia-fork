@@ -10,6 +10,7 @@
 #include "shell/panel/attached_panel_context.h"
 #include "shell/wayland/layer_surface.h"
 #include "ui/signal.h"
+#include "dbus/mpris/mpris_service.h"
 
 #include <cstdint>
 #include <memory>
@@ -18,8 +19,23 @@
 #include <vector>
 
 class Box;
+class Button;
 class Flex;
+class Glyph;
+class GridView;
+class Image;
+class Label;
 class Node;
+class ProgressBar;
+class Slider;
+
+// Forward declarations for services
+class PipeWireService;
+class BrightnessService;
+class INetworkService;
+class BluetoothService;
+class NotificationManager;
+class IdleInhibitor;
 
 struct BarCapsuleRun {
   Node* shell = nullptr;
@@ -121,4 +137,102 @@ struct BarInstance {
 
   Signal<>::ScopedConnection paletteConn;
   std::optional<AttachedPanelGeometry> attachedPanelGeometry;
+
+  // Dynamic Notch state
+  bool isNotchMode = false;
+  bool notchExpanded = false;
+  float notchExpandProgress = 0.0F;           // 0.0 = collapsed, 1.0 = expanded
+  AnimationManager::Id notchAnimationId = 0;
+  Timer notchCollapseTimer;                   // Debounce timer for pointer leave (180ms grace)
+  Timer notchAutoCollapseTimer;               // Auto-collapse timeout timer
+  // Fixed surface dimensions (set at startup, never changed during animation).
+  // All pill geometry is rendered inside this fixed bounding box.
+  std::uint32_t maxSurfaceW = 0;              // expandedWidth + shadowPadding
+  std::uint32_t maxSurfaceH = 0;              // expandedHeight + shadowPadding + topMargin
+  std::vector<std::unique_ptr<Widget>> notchCollapsedStartWidgets;
+  std::vector<std::unique_ptr<Widget>> notchCollapsedCenterWidgets;
+  std::vector<std::unique_ptr<Widget>> notchCollapsedEndWidgets;
+  std::vector<std::unique_ptr<Widget>> notchExpandedStartWidgets;
+  std::vector<std::unique_ptr<Widget>> notchExpandedCenterWidgets;
+  std::vector<std::unique_ptr<Widget>> notchExpandedEndWidgets;
+  Node* notchContentRoot = nullptr;           // Root for notch content (swaps on expand/collapse)
+  // Section nodes for collapsed/expanded widget sets (mounted once in buildNotchScene)
+  Flex* notchCollapsedStartSection = nullptr;
+  Flex* notchCollapsedCenterSection = nullptr;
+  Flex* notchCollapsedEndSection = nullptr;
+  Flex* notchExpandedStartSection = nullptr;
+  Flex* notchExpandedCenterSection = nullptr;
+  Flex* notchExpandedEndSection = nullptr;
+  InputArea* notchHoverArea = nullptr;        // Hover detection area covering current pill bounds
+  bool notchPointerInside = false;            // Track pointer inside notch area
+  bool notchFullscreenSuppressed = false;     // Suppress expand when fullscreen focused
+  bool notchSliderActive = false;             // True while any slider is being dragged
+  bool notchSubMenuOpen = false;              // True while a sub-tab/menu inside card is active
+
+  // Collapsed pill custom elements (album art + visualizer)
+  Node* notchCollapsedContainer = nullptr;    // Container for collapsed-pill elements
+  Image* notchAlbumArt = nullptr;             // Album art thumbnail (20x20, radius 5)
+  Glyph* notchFallbackGlyph = nullptr;        // Fallback music glyph when no media active
+  std::vector<Box*> notchVisualizerBars;      // 5 animated visualizer bars
+  AnimationManager::Id notchVisualizerAnimId = 0; // Visualizer pulse animation
+  bool notchMediaPlaying = false;             // Current MPRIS playback state
+  std::string notchLastArtUrl;                // Last loaded album art URL (avoid reload)
+
+  // Bento Control Center layout (built once on init, updated per-frame)
+  Node* notchBentoRoot = nullptr;             // Root for expanded Bento grid (inside contentClip)
+  // Top Header Bar: horizontal tab pills (Home, Media, Clipboard, Notifications, Files)
+  Flex* notchHeaderTabs = nullptr;
+  std::vector<Button*> notchTabPills;
+  std::size_t notchTabIndex = 0;              // Active tab index
+  // Header status: Date & Time + Battery %
+  Label* notchHeaderDateTime = nullptr;
+  Label* notchHeaderBattery = nullptr;
+  // Header action buttons: Power Profiles, Pin, Settings, Power Menu
+  Flex* notchHeaderActions = nullptr;
+  Button* notchPowerProfilesButton = nullptr;
+  Button* notchPinButton = nullptr;
+  Button* notchSettingsButton = nullptr;
+  Button* notchPowerButton = nullptr;
+  bool notchPinned = false;                   // Pin state - prevents auto-collapse when true
+  // Main 4-Column Horizontal Bento Grid (y = 46px to bottom)
+  Flex* notchBentoGrid = nullptr;
+  // Column 1 (~22%): Clock, Date & System Info Card
+  Flex* notchClockCard = nullptr;
+  Label* notchTimeLabel = nullptr;
+  Label* notchDateLabel = nullptr;
+  Label* notchSystemInfoLabel = nullptr;
+  // Column 2 (~34%): Full MPRIS Media Player Card
+  Flex* notchMediaCard = nullptr;
+  Image* notchMediaArt = nullptr;
+  Glyph* notchMediaArtFallback = nullptr;
+  Label* notchMediaTrack = nullptr;
+  Label* notchMediaArtist = nullptr;
+  Label* notchMediaProgress = nullptr;
+  ProgressBar* notchMediaProgressBar = nullptr;  // Animated progress scrubber
+  Button* notchMediaPrev = nullptr;
+  Button* notchMediaPlayPause = nullptr;
+  Button* notchMediaNext = nullptr;
+  // Column 3 (~24%): Stacked Volume & Brightness Cards
+  Flex* notchVolumeCard = nullptr;
+  Flex* notchBrightnessCard = nullptr;
+  Slider* notchVolumeSlider = nullptr;
+  Label* notchVolumeLabel = nullptr;
+  Label* notchVolumeSinkLabel = nullptr;
+  Slider* notchBrightnessSlider = nullptr;
+  Label* notchBrightnessLabel = nullptr;
+  // Column 4 (~20%): 2x2 Quick Toggle Tiles (Wi-Fi, Bluetooth, DND, Caffeine)
+  GridView* notchToggleGrid = nullptr;
+  Button* notchWifiToggle = nullptr;
+  Button* notchBluetoothToggle = nullptr;
+  Button* notchDndToggle = nullptr;
+  Button* notchCaffeineToggle = nullptr;
+
+  // Service pointers for interactivity (set during initNotchScene)
+  MprisService* m_mpris = nullptr;
+  PipeWireService* m_audio = nullptr;
+  BrightnessService* m_brightness = nullptr;
+  INetworkService* m_network = nullptr;
+  BluetoothService* m_bluetooth = nullptr;
+  NotificationManager* m_notifications = nullptr;
+  IdleInhibitor* m_idleInhibitor = nullptr;
 };

@@ -18,8 +18,8 @@
 
 VolumeWidget::VolumeWidget(PipeWireService* audio, EasyEffectsService* easyEffects, Options options)
     : m_audio(audio), m_easyEffects(easyEffects), m_showGlyph(options.showGlyph), m_showLabel(options.showLabel),
-      m_target(options.device), m_muteColor(options.muteColor), m_glyphOverride(std::move(options.glyph)),
-      m_muteGlyphOverride(std::move(options.muteGlyph)),
+      m_showSlider(options.showSlider), m_target(options.device), m_muteColor(options.muteColor),
+      m_glyphOverride(std::move(options.glyph)), m_muteGlyphOverride(std::move(options.muteGlyph)),
       m_effectsProfileGlyphs(std::move(options.effectsProfileGlyphs)),
       m_customImage(widget_custom_image::fromConfig(options.customImage, options.customImageColorize)),
       m_hideWhenInactive(options.hideWhenInactive && options.device == VolumeWidgetTarget::Input),
@@ -53,6 +53,20 @@ void VolumeWidget::create() {
       })
   );
 
+  // Inline volume slider (shown when showSlider && enough horizontal space).
+  area->addChild(
+      ui::slider({
+          .out = &m_slider,
+          .minValue = 0.0,
+          .maxValue = 1.0,
+          .step = 0.01,
+          .value = 1.0,
+          .controlHeight = Style::controlHeightSm * m_contentScale,
+          .visible = false,
+          .onValueChanged = [this](double value) { onSliderValueChanged(value); },
+      })
+  );
+
   setRoot(std::move(area));
 }
 
@@ -76,6 +90,20 @@ void VolumeWidget::doLayout(Renderer& renderer, float containerWidth, float cont
       .vertical = m_isVertical,
       .horizontalGap = Style::spaceXs,
   });
+
+  // Inline slider below the glyph+label row when there is enough horizontal space.
+  const bool showSlider = m_showSlider && !m_isVertical && containerWidth > 120.0F * m_contentScale;
+  if (m_slider != nullptr) {
+    m_slider->setVisible(showSlider);
+    if (showSlider) {
+      const float sliderWidth = std::max(0.0F, rootNode->width() - 2.0F * Style::spaceXs);
+      m_slider->setMinWidth(sliderWidth);
+      m_slider->setMaxWidth(sliderWidth);
+      m_slider->layout(renderer);
+      m_slider->setPosition(Style::spaceXs, rootNode->height() + Style::spaceXs);
+      rootNode->setSize(rootNode->width(), rootNode->height() + Style::spaceXs + m_slider->height());
+    }
+  }
 }
 
 void VolumeWidget::doUpdate(Renderer& renderer) { syncState(renderer); }
@@ -121,6 +149,15 @@ void VolumeWidget::syncState(Renderer& renderer) {
   m_lastVertical = m_isVertical;
   m_lastEffectsProfile = effectsProfile;
   m_lastMicActive = micActive;
+  if (node != nullptr) {
+    m_lastSinkId = node->id;
+  }
+
+  // Sync slider to current volume (avoid feedback: only update if different).
+  if (m_slider != nullptr
+      && std::abs(static_cast<float>(m_slider->value()) - volume) > 0.001F) {
+    m_slider->setValue(volume);
+  }
 
   const bool showWidget = !m_hideWhenInactive || micActive;
   syncWidgetVisibility(showWidget);
@@ -190,4 +227,16 @@ std::string VolumeWidget::glyphName(float volume, bool muted, const std::string&
     return m_glyphOverride;
   }
   return dynamicGlyph;
+}
+
+void VolumeWidget::onSliderValueChanged(double value) {
+  if (m_audio == nullptr || m_lastSinkId == 0) {
+    return;
+  }
+  float vol = static_cast<float>(value);
+  if (m_target == VolumeWidgetTarget::Input) {
+    m_audio->setSourceVolume(m_lastSinkId, vol);
+  } else {
+    m_audio->setSinkVolume(m_lastSinkId, vol);
+  }
 }

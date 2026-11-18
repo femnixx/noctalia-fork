@@ -396,3 +396,24 @@ void LayerSurface::applyInputRegion() {
 
   wl_surface_set_input_region(m_surface, nullptr);
 }
+
+void LayerSurface::setInputRegion(const std::vector<InputRect>& rects) {
+  if (m_surface == nullptr) {
+    return;
+  }
+
+  wl_region* region = nullptr;
+  if (!rects.empty()) {
+    region = wl_compositor_create_region(m_connection.compositor());
+    if (region == nullptr) {
+      return;
+    }
+    for (const auto& r : rects) {
+      wl_region_add(region, r.x, r.y, r.width, r.height);
+    }
+  }
+  wl_surface_set_input_region(m_surface, region);
+  if (region != nullptr) {
+    wl_region_destroy(region);
+  }
+}

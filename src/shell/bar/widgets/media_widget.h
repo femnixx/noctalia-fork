@@ -9,6 +9,8 @@
 #include <string>
 #include <unordered_set>
 
+class Button;
+class Flex;
 class Image;
 class InputArea;
 class HttpClient;
@@ -41,6 +43,9 @@ public:
     bool hideArtist = false;
     bool artistFirst = false;
     bool showProgress = false;
+    // Show playback control buttons (play/pause, next, previous) below the track info when the
+    // widget has enough vertical space (e.g. expanded notch state).
+    bool showPlaybackControls = false;
     GlyphPosition glyphPosition = GlyphPosition::Before;
     bool peek = false;
     int peekDelayMs = kBarRevealDelayMs;
@@ -79,6 +84,7 @@ private:
   bool m_hideArtist = false;
   bool m_artistFirst = false;
   bool m_showProgress = false;
+  bool m_showPlaybackControls = false;
   GlyphPosition m_glyphPosition = GlyphPosition::Before;
   // Cached from the last doLayout(); the update phase has no container extents of its own.
   bool m_isVertical = false;
@@ -89,11 +95,23 @@ private:
   Glyph* m_emptyGlyph = nullptr;
   Label* m_label = nullptr;
   ProgressBar* m_progressBar = nullptr;
+  // Playback control buttons (shown when showPlaybackControls && enough vertical space).
+  Flex* m_controlsRow = nullptr;
+  Button* m_playPauseButton = nullptr;
+  Button* m_nextButton = nullptr;
+  Button* m_prevButton = nullptr;
+  // Optional player identity line shown above the controls.
+  Label* m_playerLabel = nullptr;
 
   std::string m_lastText;
   std::string m_lastArtUrl;
   std::string m_lastPlaybackStatus;
+  std::string m_lastPlayerIdentity;
   std::unordered_set<std::string> m_pendingArtDownloads;
   std::shared_ptr<void> m_aliveGuard = std::make_shared<int>(0);
   Timer m_progressTimer;
+
+  void onPlayPause();
+  void onNext();
+  void onPrevious();
 };

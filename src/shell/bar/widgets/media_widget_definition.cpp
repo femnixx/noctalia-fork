@@ -131,6 +131,9 @@ const noctalia::bar::WidgetDefinition<MediaWidget::Options>& mediaWidgetDefiniti
           field<&Options::hideWhenIdle>({
               .key = "hide_when_idle",
           }),
+          field<&Options::showPlaybackControls>({
+              .key = "show_playback_controls",
+          }),
       },
   };
   return definition;

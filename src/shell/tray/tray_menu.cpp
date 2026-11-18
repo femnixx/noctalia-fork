@@ -131,7 +131,7 @@ namespace {
   };
 
   PopupPlacement
-  popupPlacementForBar(const BarConfig& bar, std::int32_t anchorX, std::int32_t anchorY, float contentScale) {
+  popupPlacementForBar(const BarConfig& bar, std::int32_t anchorX, std::int32_t anchorY, float contentScale, bool isNotchMode = false, int notchCenterX = 0, int notchBottomY = 0) {
     const std::int32_t kGap =
         std::max(2, static_cast<std::int32_t>(std::lround(Style::spaceMd * std::max(0.1F, contentScale))));
     const std::int32_t iconSize = std::clamp(bar.thickness - 10, 16, 40);
@@ -142,6 +142,24 @@ namespace {
         .anchorWidth = iconSize,
         .anchorHeight = iconSize,
     };
+
+    // Dynamic Notch mode: anchor popup centered beneath the notch
+    if (isNotchMode && bar.dynamicNotch && bar.position == "top") {
+      placement.anchor = XDG_POSITIONER_ANCHOR_BOTTOM;
+      placement.gravity = XDG_POSITIONER_GRAVITY_BOTTOM;
+      placement.anchorX = notchCenterX;
+      placement.anchorY = notchBottomY;
+      placement.anchorWidth = 1;
+      placement.anchorHeight = 1;
+      placement.offsetX = 0;
+      placement.offsetY = kGap;
+      placement.chromeAttachment = popup_chrome::Attachment{
+          .horizontal = popup_chrome::HorizontalAttachment::Center,
+          .vertical = popup_chrome::VerticalAttachment::Top,
+      };
+      placement.submenuDirection = ContextSubmenuDirection::Right;
+      return placement;
+    }
 
     if (bar.position == "bottom") {
       placement.anchor = XDG_POSITIONER_ANCHOR_TOP;
@@ -694,6 +712,11 @@ void TrayMenu::ensureSurface() {
     anchorY = static_cast<int>(m_wayland->lastPointerY());
   }
 
+  // Check for Dynamic Notch mode and compute notch center anchor
+  bool isNotchMode = false;
+  int notchCenterX = 0;
+  int notchBottomY = 0;
+
   auto inst = std::make_unique<MenuInstance>();
   inst->output = output;
   inst->surface = std::make_unique<PopupSurface>(*m_wayland);
@@ -713,7 +736,22 @@ void TrayMenu::ensureSurface() {
   );
   PopupPlacement placement{};
   if (const auto bar = resolveTrayBarConfig(m_config, m_wayland, output); bar.has_value()) {
-    placement = popupPlacementForBar(*bar, anchorX, anchorY, contentScale());
+    // Check for Dynamic Notch mode
+    if (bar->dynamicNotch && bar->position == "top") {
+      isNotchMode = true;
+      // Compute notch center from output logical size
+      if (const auto* wlOutput = m_wayland->findOutputByWl(output); wlOutput != nullptr) {
+        const int outputLogicalWidth = wlOutput->effectiveLogicalWidth();
+        const int outputLogicalHeight = wlOutput->effectiveLogicalHeight();
+        // Notch is centered horizontally
+        notchCenterX = outputLogicalWidth / 2;
+        // Notch bottom Y: expanded height + top margin (0 for macOS style)
+        // Use expanded height from config, scaled
+        const int expandedHeight = static_cast<int>(std::lround(bar->notchExpandedHeight * contentScale()));
+        notchBottomY = expandedHeight;
+      }
+    }
+    placement = popupPlacementForBar(*bar, anchorX, anchorY, contentScale(), isNotchMode, notchCenterX, notchBottomY);
     anchorX = placement.anchorX;
     anchorY = placement.anchorY;
   }

@@ -75,9 +75,11 @@ public:
   void setKeyboardInteractivity(LayerShellKeyboard mode);
   void setClosedCallback(std::function<void()> callback);
   // Asks the compositor to blur what lies behind rects (surface-local) when it supports blur.
-  void setBlurRegion(const std::vector<InputRect>& rects);
-  void clearBlurRegion();
-  // True when any rect covers at least one pixel of a `width` x `height` surface.
+void setBlurRegion(const std::vector<InputRect>& rects);
+   void clearBlurRegion();
+   // Sets the input region for the surface (for click-through on transparent areas).
+   void setInputRegion(const std::vector<InputRect>& rects);
+   // True when any rect covers at least one pixel of a `width` x `height` surface.
   // Rects are surface-local, so they may legitimately sit partly or fully outside.
   static bool regionIntersectsBounds(const std::vector<InputRect>& rects, std::uint32_t width, std::uint32_t height);
   LayerShellKeyboard keyboardInteractivity() const noexcept { return m_config.keyboard; }

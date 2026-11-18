@@ -32,7 +32,8 @@ MediaWidget::MediaWidget(MprisService* mpris, HttpClient* httpClient, wl_output*
       m_titleScrollMode(options.titleScrollMode), m_hideWhenNoMedia(options.hideWhenNoMedia),
       m_hideWhenIdle(options.hideWhenIdle), m_rotateAlbumArt(options.rotateAlbumArt),
       m_albumArtOnly(options.albumArtOnly), m_hideAlbumArt(options.hideAlbumArt), m_hideArtist(options.hideArtist),
-      m_artistFirst(options.artistFirst), m_showProgress(options.showProgress), m_glyphPosition(options.glyphPosition) {
+      m_artistFirst(options.artistFirst), m_showProgress(options.showProgress),
+      m_showPlaybackControls(options.showPlaybackControls), m_glyphPosition(options.glyphPosition) {
   setPeek(options.peek && !options.albumArtOnly && !options.hideAlbumArt, options.peekDelayMs);
 }
 
@@ -96,6 +97,54 @@ void MediaWidget::create() {
       })
   );
 
+  // Player identity label (shown above playback controls in expanded state).
+  area->addChild(
+      ui::label({
+          .out = &m_playerLabel,
+          .fontSize = Style::fontSizeCaption * m_contentScale,
+          .fontWeight = labelFontWeight(),
+          .fontFamily = labelFontFamily(),
+          .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+          .maxLines = 1,
+          .visible = false,
+      })
+  );
+
+  // Playback control buttons (shown when showPlaybackControls && enough vertical space).
+  auto controlsRow = ui::flex(
+      FlexDirection::Horizontal,
+      ui::FlexProps{.align = FlexAlign::Center, .gap = Style::spaceXs}
+  );
+  controlsRow->addChild(
+      ui::button({
+          .out = &m_prevButton,
+          .glyph = "skip-previous",
+          .glyphSize = Style::baseGlyphSize * 0.75F * m_contentScale,
+          .controlHeight = Style::controlHeightSm * m_contentScale,
+          .onClick = [this] { onPrevious(); },
+      })
+  );
+  controlsRow->addChild(
+      ui::button({
+          .out = &m_playPauseButton,
+          .glyph = "play-pause",
+          .glyphSize = Style::baseGlyphSize * 0.75F * m_contentScale,
+          .controlHeight = Style::controlHeightSm * m_contentScale,
+          .onClick = [this] { onPlayPause(); },
+      })
+  );
+  controlsRow->addChild(
+      ui::button({
+          .out = &m_nextButton,
+          .glyph = "skip-next",
+          .glyphSize = Style::baseGlyphSize * 0.75F * m_contentScale,
+          .controlHeight = Style::controlHeightSm * m_contentScale,
+          .onClick = [this] { onNext(); },
+      })
+  );
+  m_controlsRow = controlsRow.get();
+  area->addChild(std::move(controlsRow));
+
   setRoot(std::move(area));
 }
 
@@ -158,13 +207,46 @@ void MediaWidget::doLayout(Renderer& renderer, float containerWidth, float conta
   m_label->setMaxWidth(labelMaxWidth);
   m_label->measure(renderer);
 
-  float contentHeight = showLabel ? m_label->height() : 0.0F;
-  if (showArtSlot) {
-    contentHeight = std::max(contentHeight, artSize);
+  const float baseContentHeight =
+      std::max({showLabel ? m_label->height() : 0.0F, showArtSlot ? artSize : 0.0F,
+                showEmptyGlyph ? m_emptyGlyph->height() : 0.0F});
+
+  // Show expanded playback controls when there is enough vertical space and a player is active.
+  const bool showControls = m_showPlaybackControls && !artOnly && active.has_value() &&
+      containerHeight > Style::controlHeightSm * 1.75F * m_contentScale;
+
+  float controlsHeight = 0.0F;
+  float controlsWidth = 0.0F;
+  if (showControls) {
+    if (m_playerLabel != nullptr && !m_lastPlayerIdentity.empty()) {
+      m_playerLabel->setText(m_lastPlayerIdentity);
+      m_playerLabel->setVisible(true);
+      m_playerLabel->measure(renderer);
+      controlsHeight += m_playerLabel->height() + Style::spaceXs;
+      controlsWidth = std::max(controlsWidth, m_playerLabel->width());
+    } else {
+      m_playerLabel->setVisible(false);
+    }
+    if (m_controlsRow != nullptr) {
+      m_controlsRow->setVisible(true);
+      m_controlsRow->layout(renderer);
+      controlsHeight += m_controlsRow->height();
+      controlsWidth = std::max(controlsWidth, m_controlsRow->width());
+    }
+  } else {
+    if (m_playerLabel != nullptr) {
+      m_playerLabel->setVisible(false);
+    }
+    if (m_controlsRow != nullptr) {
+      m_controlsRow->setVisible(false);
+    }
   }
-  if (showEmptyGlyph) {
-    contentHeight = std::max(contentHeight, m_emptyGlyph->height());
+
+  float contentHeight = baseContentHeight;
+  if (showControls) {
+    contentHeight += Style::spaceXs + controlsHeight;
   }
+
   if (artOnly) {
     if (showArtSlot) {
       m_art->setPosition(0.0F, 0.0F);
@@ -179,13 +261,28 @@ void MediaWidget::doLayout(Renderer& renderer, float containerWidth, float conta
       rootNode->setSize(0.0F, 0.0F);
     }
   } else {
-    const float contentWidth = leadingWidth + spacing + (showLabel ? m_label->width() : 0.0F);
+    const float contentWidth = std::max(
+        leadingWidth + spacing + (showLabel ? m_label->width() : 0.0F), controlsWidth);
     rootNode->setSize(std::clamp(contentWidth, minLength, maxLength), contentHeight);
     const bool glyphAfter = m_glyphPosition == GlyphPosition::After;
     const float glyphX = glyphAfter ? rootNode->width() - leadingWidth : 0.0F;
-    m_art->setPosition(glyphX, std::round((contentHeight - artSize) * 0.5F));
-    m_emptyGlyph->setPosition(glyphX, std::round((contentHeight - m_emptyGlyph->height()) * 0.5F));
-    m_label->setPosition(glyphAfter ? 0.0F : leadingWidth + spacing, (contentHeight - m_label->height()) * 0.5F);
+    // Vertically center art/label/glyph within the base content area (above the controls).
+    m_art->setPosition(glyphX, std::round((baseContentHeight - artSize) * 0.5F));
+    m_emptyGlyph->setPosition(glyphX, std::round((baseContentHeight - m_emptyGlyph->height()) * 0.5F));
+    m_label->setPosition(glyphAfter ? 0.0F : leadingWidth + spacing,
+                         std::round((baseContentHeight - m_label->height()) * 0.5F));
+
+    // Position player label and controls row below the base content.
+    if (showControls) {
+      float cursorY = baseContentHeight + Style::spaceXs;
+      if (m_playerLabel != nullptr && m_playerLabel->visible()) {
+        m_playerLabel->setPosition(leadingWidth + spacing, cursorY);
+        cursorY += m_playerLabel->height() + Style::spaceXs;
+      }
+      if (m_controlsRow != nullptr && m_controlsRow->visible()) {
+        m_controlsRow->setPosition(leadingWidth + spacing, cursorY);
+      }
+    }
   }
   const float peekOffset =
       applyPeek(rootNode->width(), artOnly ? rootNode->width() : leadingWidth, m_glyphPosition, false);
@@ -353,6 +450,7 @@ void MediaWidget::syncState(Renderer& renderer, const std::optional<MprisPlayerI
   m_lastText = displayText;
   m_lastArtUrl = artUrl;
   m_lastPlaybackStatus = playbackStatus;
+  m_lastPlayerIdentity = active.has_value() ? active->identity : std::string();
 
   if (textChanged) {
     m_label->setText(m_lastText);
@@ -428,4 +526,32 @@ std::string MediaWidget::buildDisplayText(const MprisPlayerInfo& player, bool hi
     return i18n::tr("bar.widgets.media.playing");
   }
   return i18n::tr("bar.widgets.media.nothing-playing");
+}
+
+void MediaWidget::onPlayPause() {
+  const auto active = activePlayer();
+  if (!active.has_value() || !m_mpris) {
+    return;
+  }
+  if (active->playbackStatus == "Playing") {
+    m_mpris->pause(active->busName);
+  } else {
+    m_mpris->play(active->busName);
+  }
+}
+
+void MediaWidget::onNext() {
+  const auto active = activePlayer();
+  if (!active.has_value() || !m_mpris) {
+    return;
+  }
+  m_mpris->next(active->busName);
+}
+
+void MediaWidget::onPrevious() {
+  const auto active = activePlayer();
+  if (!active.has_value() || !m_mpris) {
+    return;
+  }
+  m_mpris->previous(active->busName);
 }

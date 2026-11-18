@@ -78,6 +78,9 @@ const noctalia::bar::WidgetDefinition<VolumeWidget::Options>& volumeWidgetDefini
                           .visibleWhen = settings::WidgetSettingVisibility{"device", {"input"}},
                       },
               }),
+              field<&Options::showSlider>({
+                  .key = "show_slider",
+              }),
           },
       .glyph = [](const Options& options) -> std::string {
         if (!options.glyph.empty()) {

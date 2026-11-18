@@ -31,6 +31,12 @@ namespace noctalia::config::schema {
     constexpr Range<double> kBarCapsulePaddingRangeD{0.0, 48.0};
     constexpr Range<double> kBarCapsuleRadiusRangeD{0.0, 80.0};
     constexpr Range<double> kBarCapsuleOpacityRangeD{0.0, 1.0};
+    // Dynamic Notch ranges
+    constexpr Range<std::int64_t> kNotchWidthRange{100, 2000};
+    constexpr Range<std::int64_t> kNotchHeightRange{20, 500};
+    constexpr Range<std::int64_t> kNotchRadiusRange{0, 100};
+    constexpr Range<std::int64_t> kNotchTopMarginRange{0, 100};
+    constexpr Range<std::int64_t> kNotchDelayRange{0, 10000};
 
     // The capsule_border pair: a bool "specified" flag plus an optional<ColorSpec>.
     // A present key (even empty) sets specified=true; an empty value means "no
@@ -214,6 +220,26 @@ namespace noctalia::config::schema {
         field(&BarConfig::showTooltip, "show_tooltip"),
         subTable(&BarConfig::deadZone, "dead_zone", barDeadZoneSchema()),
         field(&BarConfig::actions, "actions"),
+        // Dynamic Notch
+        field(&BarConfig::dynamicNotch, "dynamic_notch"),
+        field(&BarConfig::notchCollapsedWidth, "notch_collapsed_width", kNotchWidthRange),
+        field(&BarConfig::notchCollapsedHeight, "notch_collapsed_height", kNotchHeightRange),
+        field(&BarConfig::notchExpandedWidth, "notch_expanded_width", kNotchWidthRange),
+        field(&BarConfig::notchExpandedHeight, "notch_expanded_height", kNotchHeightRange),
+        field(&BarConfig::notchCollapsedRadius, "notch_collapsed_radius", kNotchRadiusRange),
+        field(&BarConfig::notchExpandedRadius, "notch_expanded_radius", kNotchRadiusRange),
+        field(&BarConfig::notchTopMargin, "notch_top_margin", kNotchTopMarginRange),
+        field(&BarConfig::notchHoverExpand, "notch_hover_expand"),
+        field(&BarConfig::notchClickExpand, "notch_click_expand"),
+        field(&BarConfig::notchExpandDelayMs, "notch_expand_delay_ms", kNotchDelayRange),
+        field(&BarConfig::notchCollapseDelayMs, "notch_collapse_delay_ms", kNotchDelayRange),
+        field(&BarConfig::notchAutoCollapseTimeoutMs, "notch_auto_collapse_timeout_ms", kNotchDelayRange),
+        field(&BarConfig::notchCollapsedStart, "notch_collapsed_start"),
+        field(&BarConfig::notchCollapsedCenter, "notch_collapsed_center"),
+        field(&BarConfig::notchCollapsedEnd, "notch_collapsed_end"),
+        field(&BarConfig::notchExpandedStart, "notch_expanded_start"),
+        field(&BarConfig::notchExpandedCenter, "notch_expanded_center"),
+        field(&BarConfig::notchExpandedEnd, "notch_expanded_end"),
     };
     return s;
   }
@@ -322,6 +348,26 @@ namespace noctalia::config::schema {
             [](toml::table&, const BarMonitorOverride&) {}
         ),
         subTable(&BarMonitorOverride::deadZone, "dead_zone", barDeadZoneOverrideSchema()),
+        // Dynamic Notch (per-monitor override)
+        optionalBoolField(&BarMonitorOverride::dynamicNotch, "dynamic_notch"),
+        optionalIntField(&BarMonitorOverride::notchCollapsedWidth, "notch_collapsed_width", kNotchWidthRange),
+        optionalIntField(&BarMonitorOverride::notchCollapsedHeight, "notch_collapsed_height", kNotchHeightRange),
+        optionalIntField(&BarMonitorOverride::notchExpandedWidth, "notch_expanded_width", kNotchWidthRange),
+        optionalIntField(&BarMonitorOverride::notchExpandedHeight, "notch_expanded_height", kNotchHeightRange),
+        optionalIntField(&BarMonitorOverride::notchCollapsedRadius, "notch_collapsed_radius", kNotchRadiusRange),
+        optionalIntField(&BarMonitorOverride::notchExpandedRadius, "notch_expanded_radius", kNotchRadiusRange),
+        optionalIntField(&BarMonitorOverride::notchTopMargin, "notch_top_margin", kNotchTopMarginRange),
+        optionalBoolField(&BarMonitorOverride::notchHoverExpand, "notch_hover_expand"),
+        optionalBoolField(&BarMonitorOverride::notchClickExpand, "notch_click_expand"),
+        optionalIntField(&BarMonitorOverride::notchExpandDelayMs, "notch_expand_delay_ms", kNotchDelayRange),
+        optionalIntField(&BarMonitorOverride::notchCollapseDelayMs, "notch_collapse_delay_ms", kNotchDelayRange),
+        optionalIntField(&BarMonitorOverride::notchAutoCollapseTimeoutMs, "notch_auto_collapse_timeout_ms", kNotchDelayRange),
+        optionalStringVectorField(&BarMonitorOverride::notchCollapsedStart, "notch_collapsed_start"),
+        optionalStringVectorField(&BarMonitorOverride::notchCollapsedCenter, "notch_collapsed_center"),
+        optionalStringVectorField(&BarMonitorOverride::notchCollapsedEnd, "notch_collapsed_end"),
+        optionalStringVectorField(&BarMonitorOverride::notchExpandedStart, "notch_expanded_start"),
+        optionalStringVectorField(&BarMonitorOverride::notchExpandedCenter, "notch_expanded_center"),
+        optionalStringVectorField(&BarMonitorOverride::notchExpandedEnd, "notch_expanded_end"),
     };
     return s;
   }

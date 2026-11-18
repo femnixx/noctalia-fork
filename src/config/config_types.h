@@ -157,6 +157,27 @@ struct BarMonitorOverride {
   std::optional<bool> showTooltip;
   BarDeadZoneOverride deadZone;
 
+  // Dynamic Notch (per-monitor override)
+  std::optional<bool> dynamicNotch;
+  std::optional<std::int32_t> notchCollapsedWidth;
+  std::optional<std::int32_t> notchCollapsedHeight;
+  std::optional<std::int32_t> notchExpandedWidth;
+  std::optional<std::int32_t> notchExpandedHeight;
+  std::optional<std::int32_t> notchCollapsedRadius;
+  std::optional<std::int32_t> notchExpandedRadius;
+  std::optional<std::int32_t> notchTopMargin;
+  std::optional<bool> notchHoverExpand;
+  std::optional<bool> notchClickExpand;
+  std::optional<std::int32_t> notchExpandDelayMs;
+  std::optional<std::int32_t> notchCollapseDelayMs;
+  std::optional<std::int32_t> notchAutoCollapseTimeoutMs;
+  std::optional<std::vector<std::string>> notchCollapsedStart;
+  std::optional<std::vector<std::string>> notchCollapsedCenter;
+  std::optional<std::vector<std::string>> notchCollapsedEnd;
+  std::optional<std::vector<std::string>> notchExpandedStart;
+  std::optional<std::vector<std::string>> notchExpandedCenter;
+  std::optional<std::vector<std::string>> notchExpandedEnd;
+
   bool isAutoHideEnabled(bool baseAutoHide, bool baseSmartAutoHide) const noexcept {
     return autoHide.value_or(baseAutoHide) || smartAutoHide.value_or(baseSmartAutoHide);
   }
@@ -256,6 +277,27 @@ struct BarConfig {
   bool showTooltip = true;
   BarDeadZoneConfig deadZone;
   std::vector<BarMonitorOverride> monitorOverrides;
+
+  // Dynamic Notch
+  bool dynamicNotch = false;
+  std::int32_t notchCollapsedWidth = 200;
+  std::int32_t notchCollapsedHeight = 32;
+  std::int32_t notchExpandedWidth = 880;
+  std::int32_t notchExpandedHeight = 360;
+  std::int32_t notchCollapsedRadius = 14;
+  std::int32_t notchExpandedRadius = 24;
+  std::int32_t notchTopMargin = 0;
+  bool notchHoverExpand = true;
+  bool notchClickExpand = true;
+  std::int32_t notchExpandDelayMs = 0;
+  std::int32_t notchCollapseDelayMs = 180;
+  std::int32_t notchAutoCollapseTimeoutMs = 3500;
+  std::vector<std::string> notchCollapsedStart = {"workspaces"};
+  std::vector<std::string> notchCollapsedCenter = {"media"};
+  std::vector<std::string> notchCollapsedEnd = {"clock", "battery"};
+  std::vector<std::string> notchExpandedStart = {"workspaces", "launcher"};
+  std::vector<std::string> notchExpandedCenter = {"media", "volume", "brightness"};
+  std::vector<std::string> notchExpandedEnd = {"notifications", "tray", "control-center", "session", "clock", "battery"};
 
   bool operator==(const BarConfig&) const = default;
 };

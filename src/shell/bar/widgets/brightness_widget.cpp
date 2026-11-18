@@ -25,7 +25,8 @@ namespace {
 
 BrightnessWidget::BrightnessWidget(BrightnessService* brightness, wl_output* output, Options options)
     : m_brightness(brightness), m_output(output), m_showGlyph(options.showGlyph), m_showLabel(options.showLabel),
-      m_showWhenUnavailable(options.showWhenUnavailable), m_glyphPosition(options.glyphPosition) {
+      m_showSlider(options.showSlider), m_showWhenUnavailable(options.showWhenUnavailable),
+      m_glyphPosition(options.glyphPosition) {
   setPeek(options.peek, options.peekDelayMs);
 }
 
@@ -50,6 +51,20 @@ void BrightnessWidget::create() {
           .fontWeight = labelFontWeight(),
           .fontFamily = labelFontFamily(),
           .visible = m_showLabel,
+      })
+  );
+
+  // Inline brightness slider (shown when showSlider && enough horizontal space).
+  area->addChild(
+      ui::slider({
+          .out = &m_slider,
+          .minValue = 0.0,
+          .maxValue = 1.0,
+          .step = 0.01,
+          .value = 1.0,
+          .controlHeight = Style::controlHeightSm * m_contentScale,
+          .visible = false,
+          .onValueChanged = [this](double value) { onSliderValueChanged(value); },
       })
   );
 
@@ -82,6 +97,20 @@ void BrightnessWidget::doLayout(Renderer& renderer, float containerWidth, float 
       .vertical = m_isVertical,
       .horizontalGap = Style::spaceXs,
   });
+
+  // Inline slider below the glyph+label row when there is enough horizontal space.
+  const bool showSlider = m_showSlider && !m_isVertical && containerWidth > 120.0F * m_contentScale;
+  if (m_slider != nullptr) {
+    m_slider->setVisible(showSlider);
+    if (showSlider) {
+      const float sliderWidth = std::max(0.0F, rootNode->width() - 2.0F * Style::spaceXs);
+      m_slider->setMinWidth(sliderWidth);
+      m_slider->setMaxWidth(sliderWidth);
+      m_slider->layout(renderer);
+      m_slider->setPosition(Style::spaceXs, rootNode->height() + Style::spaceXs);
+      rootNode->setSize(rootNode->width(), rootNode->height() + Style::spaceXs + m_slider->height());
+    }
+  }
 }
 
 void BrightnessWidget::doUpdate(Renderer& renderer) { syncState(renderer); }
@@ -114,6 +143,13 @@ void BrightnessWidget::syncState(Renderer& renderer) {
   m_lastAvailable = available;
   m_lastBrightness = brightness;
   m_lastVertical = m_isVertical;
+  m_lastDisplayId = display != nullptr ? display->id : std::string();
+
+  // Sync slider to current brightness (avoid feedback: only update if different).
+  if (m_slider != nullptr
+      && std::abs(static_cast<float>(m_slider->value()) - brightness) > 0.001F) {
+    m_slider->setValue(brightness);
+  }
 
   syncWidgetVisibility(available || (m_showWhenUnavailable && m_showGlyph));
   if (!available) {
@@ -161,4 +197,11 @@ void BrightnessWidget::syncState(Renderer& renderer) {
   }
 
   requestRedraw();
+}
+
+void BrightnessWidget::onSliderValueChanged(double value) {
+  if (m_brightness == nullptr || m_lastDisplayId.empty()) {
+    return;
+  }
+  m_brightness->setBrightness(m_lastDisplayId, static_cast<float>(value));
 }

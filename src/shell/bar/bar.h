@@ -163,6 +163,26 @@ private:
   void reevaluateSmartAutoHide();
   void startHideFadeOut(BarInstance& instance, bool immediate = false);
   static void applyBackgroundPalette(BarInstance& instance);
+  // Dynamic Notch member functions
+  void animateNotchExpand(BarInstance& instance, bool expand);
+  void updateNotchInputRegion(BarInstance& instance, float pillX, float pillY, float pillW, float pillH);
+  bool isFullscreenFocused() const;
+  void triggerNotchExpand(BarInstance& instance);
+  void startNotchVisualizerAnimation(BarInstance& instance);
+  void stopNotchVisualizerAnimation(BarInstance& instance);
+  void initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32_t height);
+  void updateNotchGeometry(BarInstance& instance, std::uint32_t width, std::uint32_t height);
+  void layoutNotchWidgets(BarInstance& instance, Renderer& renderer, float pillX, float pillY, float pillW, float pillH, float progress);
+  void prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool needsLayout);
+  struct NotchDimensions {
+    float collapsedWidth;
+    float collapsedHeight;
+    float expandedWidth;
+    float expandedHeight;
+    float collapsedRadius;
+    float expandedRadius;
+  };
+  NotchDimensions computeNotchDimensions(const BarInstance& instance, float progress) const;
   std::string showBarIpc(std::string_view args);
   std::string hideBarIpc(std::string_view args);
   std::string toggleBarIpc(std::string_view args);
