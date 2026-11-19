@@ -390,11 +390,31 @@ void LayerSurface::applyInputRegion() {
   }
 
   if (m_clickThrough) {
-    setInputRegion({});
+    // clickThrough=true: use the custom input region set via setInputRegion()
+    // If no custom region is set yet, don't set any input region (full surface).
+    if (m_customInputRegionRects.empty()) {
+      // No custom region set -> don't set any input region (full surface)
+      // This allows pointer events to be delivered until a custom region is set.
+      wl_surface_set_input_region(m_surface, nullptr);
+      wl_surface_commit(m_surface);
+      return;
+    }
+    // Use the custom region that was set via setInputRegion()
+    wl_region* region = wl_compositor_create_region(m_connection.compositor());
+    if (region != nullptr) {
+      for (const auto& r : m_customInputRegionRects) {
+        wl_region_add(region, r.x, r.y, r.width, r.height);
+      }
+      wl_surface_set_input_region(m_surface, region);
+      wl_region_destroy(region);
+      wl_surface_commit(m_surface);
+    }
     return;
   }
 
+  // clickThrough=false: entire surface is interactive
   wl_surface_set_input_region(m_surface, nullptr);
+  wl_surface_commit(m_surface);
 }
 
 void LayerSurface::setInputRegion(const std::vector<InputRect>& rects) {
@@ -402,18 +422,6 @@ void LayerSurface::setInputRegion(const std::vector<InputRect>& rects) {
     return;
   }
 
-  wl_region* region = nullptr;
-  if (!rects.empty()) {
-    region = wl_compositor_create_region(m_connection.compositor());
-    if (region == nullptr) {
-      return;
-    }
-    for (const auto& r : rects) {
-      wl_region_add(region, r.x, r.y, r.width, r.height);
-    }
-  }
-  wl_surface_set_input_region(m_surface, region);
-  if (region != nullptr) {
-    wl_region_destroy(region);
-  }
+  m_customInputRegionRects = rects;
+  applyInputRegion();
 }

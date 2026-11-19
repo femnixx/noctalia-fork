@@ -11,6 +11,7 @@
 #include "shell/wayland/layer_surface.h"
 #include "ui/signal.h"
 #include "dbus/mpris/mpris_service.h"
+#include "pipewire/pipewire_service.h"
 
 #include <cstdint>
 #include <memory>
@@ -30,7 +31,6 @@ class ProgressBar;
 class Slider;
 
 // Forward declarations for services
-class PipeWireService;
 class BrightnessService;
 class INetworkService;
 class BluetoothService;
@@ -178,6 +178,11 @@ struct BarInstance {
   bool notchMediaPlaying = false;             // Current MPRIS playback state
   std::string notchLastArtUrl;                // Last loaded album art URL (avoid reload)
 
+  // Concave "fang" fillets at top-left and top-right (concave inverse-rounded corners)
+  // Removed: true concave corner cutouts not supported by current renderer (would render as floating circles)
+  // Box* notchFangLeft = nullptr;
+  // Box* notchFangRight = nullptr;
+
   // Bento Control Center layout (built once on init, updated per-frame)
   Node* notchBentoRoot = nullptr;             // Root for expanded Bento grid (inside contentClip)
   // Top Header Bar: horizontal tab pills (Home, Media, Clipboard, Notifications, Files)
@@ -214,10 +219,18 @@ struct BarInstance {
   Button* notchMediaNext = nullptr;
   // Column 3 (~24%): Stacked Volume & Brightness Cards
   Flex* notchVolumeCard = nullptr;
+  Flex* notchMicCard = nullptr;
   Flex* notchBrightnessCard = nullptr;
   Slider* notchVolumeSlider = nullptr;
   Label* notchVolumeLabel = nullptr;
   Label* notchVolumeSinkLabel = nullptr;
+  Button* notchVolumeMuteButton = nullptr;
+  Button* notchVolumeDeviceSelector = nullptr;
+  Slider* notchMicSlider = nullptr;
+  Label* notchMicLabel = nullptr;
+  Label* notchMicSourceLabel = nullptr;
+  Button* notchMicMuteButton = nullptr;
+  Button* notchMicDeviceSelector = nullptr;
   Slider* notchBrightnessSlider = nullptr;
   Label* notchBrightnessLabel = nullptr;
   // Column 4 (~20%): 2x2 Quick Toggle Tiles (Wi-Fi, Bluetooth, DND, Caffeine)
@@ -226,6 +239,11 @@ struct BarInstance {
   Button* notchBluetoothToggle = nullptr;
   Button* notchDndToggle = nullptr;
   Button* notchCaffeineToggle = nullptr;
+  // Toggle tile labels for color updates
+  Label* notchWifiLabel = nullptr;
+  Label* notchBluetoothLabel = nullptr;
+  Label* notchDndLabel = nullptr;
+  Label* notchCaffeineLabel = nullptr;
 
   // Service pointers for interactivity (set during initNotchScene)
   MprisService* m_mpris = nullptr;

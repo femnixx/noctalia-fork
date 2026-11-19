@@ -88,6 +88,7 @@ void setBlurRegion(const std::vector<InputRect>& rects);
   std::int32_t marginRight() const noexcept { return m_config.marginRight; }
   std::int32_t marginBottom() const noexcept { return m_config.marginBottom; }
   std::int32_t marginLeft() const noexcept { return m_config.marginLeft; }
+  bool clickThrough() const noexcept { return m_clickThrough; }
 
   static void handleConfigure(
       void* data, zwlr_layer_surface_v1* layerSurface, std::uint32_t serial, std::uint32_t width, std::uint32_t height
@@ -105,4 +106,5 @@ private:
   ext_background_effect_surface_v1* m_backgroundEffect = nullptr;
   std::function<void()> m_closedCallback;
   bool m_clickThrough = false;
+  std::vector<InputRect> m_customInputRegionRects;
 };

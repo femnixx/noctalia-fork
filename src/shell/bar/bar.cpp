@@ -38,7 +38,7 @@
 #include "wayland/wayland_connection.h"
 #include "system/brightness_service.h"
 #include "notification/notification_manager.h"
-#include "pipewire/pipewire_service.h"
+#include "lib/render/core/color.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -49,6 +49,8 @@
 #include <unordered_set>
 #include <wayland-client-core.h>
 #include <wayland-client-protocol.h>
+#include <pwd.h>
+#include <fstream>
 
 namespace {
 
@@ -2578,7 +2580,7 @@ void Bar::createInstance(const WaylandOutput& output, std::size_t barIndex, cons
 
   auto surfaceConfig = LayerSurfaceConfig{
       .nameSpace = "noctalia-bar-" + barConfig.name,
-      .layer = layerShellLayerFromConfig(barConfig.layer),
+      .layer = isNotchMode ? LayerShellLayer::Overlay : layerShellLayerFromConfig(barConfig.layer),
       .anchor = anchor,
       .width = surfaceSpec.surfaceWidth,
       .height = surfaceSpec.surfaceHeight,
@@ -2587,6 +2589,8 @@ void Bar::createInstance(const WaylandOutput& output, std::size_t barIndex, cons
       .marginRight = surfaceSpec.marginRight,
       .marginBottom = surfaceSpec.marginBottom,
       .marginLeft = surfaceSpec.marginLeft,
+      .keyboard = isNotchMode ? LayerShellKeyboard::OnDemand : LayerShellKeyboard::None,
+      .defaultWidth = 1920,
       .defaultHeight = surfaceSpec.surfaceHeight,
       .prewarmBlur = barConfig.compositorBlur,
   };
@@ -2623,6 +2627,18 @@ void Bar::createInstance(const WaylandOutput& output, std::size_t barIndex, cons
   if (!instance->surface->initialize(output.output)) {
     kLog.warn("failed to initialize surface for output {}", output.name);
     return;
+  }
+
+  // Enable custom input region for notch surface so the pill-shaped
+  // input region (updated per-frame) is respected. With clickThrough=true,
+  // the custom input region set via setInputRegion() is used.
+  if (isNotchMode) {
+    inst->surface->setClickThrough(true);
+  }
+
+  // Render initial frame to commit a buffer so the surface is mapped and receives pointer events.
+  if (isNotchMode) {
+    buildScene(*inst, surfaceSpec.surfaceWidth, surfaceSpec.surfaceHeight);
   }
 
   m_surfaceMap[instance->surface->wlSurface()] = instance.get();
@@ -3591,17 +3607,17 @@ Bar::NotchDimensions Bar::computeNotchDimensions(const BarInstance& instance, [[
   );
   const float collapsedHeight = static_cast<float>(cfg.notchCollapsedHeight); // fixed 32px
 
-  // Expanded: clamp between 640-880px width, 300-50% screen height
+  // Expanded: clamp between 660-900px width, 310-55% screen height
   // Generous horizontal proportions for NotchX × Noctalia Bento Dashboard
-  // Enforce minimum 860×340 even if config has stale smaller values.
+  // Enforce minimum 900×360 even if config has stale smaller values.
   const float expandedWidth = std::clamp(
-      std::max(static_cast<float>(cfg.notchExpandedWidth), 860.0F),
-      640.0F,
-      outputWidth - 48.0F
+      std::max(static_cast<float>(cfg.notchExpandedWidth), 900.0F),
+      660.0F,
+      outputWidth - 40.0F
   );
   const float expandedHeight = std::clamp(
-      std::max(static_cast<float>(cfg.notchExpandedHeight), 340.0F),
-      300.0F,
+      std::max(static_cast<float>(cfg.notchExpandedHeight), 360.0F),
+      310.0F,
       outputHeight * 0.55F
   );
 
@@ -3624,7 +3640,6 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
   const float gridY = 56.0F * contentScale;          // 12 + 36 + 8 = 56px from top
   const float innerPad = 16.0F * contentScale;       // 16px left/right/bottom padding
   const float colGap = 12.0F * contentScale;         // 12px gap between columns
-  const float cardRadius = 12.0F * contentScale;
   const float controlH = Style::controlHeight * contentScale;
 
   // Root for expanded Bento grid (inside contentClip, positioned each frame)
@@ -3636,6 +3651,8 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
           .align = FlexAlign::Center,
           .justify = FlexJustify::SpaceBetween,
           .gap = 10.0F * contentScale,
+          .padding = std::nullopt,
+          .paddingV = 10.0F * contentScale,
           .paddingH = innerPad,
       })
   );
@@ -3647,6 +3664,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       ui::flex(FlexDirection::Horizontal, ui::FlexProps{
           .align = FlexAlign::Center,
           .gap = 6.0F * contentScale,
+          .paddingH = 8.0F * contentScale,  // Additional horizontal padding for tabs
       })
   ));
 
@@ -3707,6 +3725,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       ui::flex(FlexDirection::Horizontal, ui::FlexProps{
           .align = FlexAlign::Center,
           .gap = 4.0F * contentScale,
+          .paddingH = 8.0F * contentScale,  // Additional horizontal padding for action buttons
       })
   ));
   const float iconBtnSize = headerH;
@@ -3768,12 +3787,17 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       })
   ));
 
-  // ===== MAIN 4-COLUMN HORIZONTAL BENTO GRID (y = 56px, height = pillH - 72px, width = pillW - 32px) =====
+  // ===== MAIN 4-COLUMN HORIZONTAL BENTO GRID (y = 56px, height = pillH - 76px, width = pillW - 32px) =====
   // Positioned per-frame in layoutNotchWidgets to track pill bounds.
-  auto mainContent = instance.notchBentoRoot->addChild(
+  // Outer padding: 16px left/right/bottom, 12px top below header (gridY = 56px)
+  // Internal gap: 12px between all cards/columns
+auto mainContent = instance.notchBentoRoot->addChild(
       ui::flex(FlexDirection::Horizontal, ui::FlexProps{
           .align = FlexAlign::Stretch,
+          .justify = FlexJustify::Start,
           .gap = colGap,
+          .paddingV = innerPad,
+          .paddingH = innerPad,
       })
   );
   instance.notchBentoGrid = static_cast<Flex*>(mainContent);
@@ -3833,7 +3857,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
        })
    ));
    styleCard(*instance.notchMediaCard);
-  // Album art + track info row
+  // Album art + track info row: 76x76px album art on left, track info on right
   auto mediaTopRow = instance.notchMediaCard->addChild(
       ui::flex(FlexDirection::Horizontal, ui::FlexProps{
           .align = FlexAlign::Center,
@@ -3843,16 +3867,16 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
   instance.notchMediaArt = static_cast<Image*>(mediaTopRow->addChild(
       ui::image({
           .fit = ImageFit::Cover,
-          .radius = Style::scaledRadiusLg(contentScale),
-          .width = 64.0F * contentScale,
-          .height = 64.0F * contentScale,
+          .radius = 12.0F * contentScale,  // 12px radius
+          .width = 68.0F * contentScale,
+          .height = 68.0F * contentScale,
       })
   ));
   instance.notchMediaArt->setVisible(false);
   instance.notchMediaArtFallback = static_cast<Glyph*>(mediaTopRow->addChild(
       ui::glyph({
           .glyph = "disc",
-          .glyphSize = 32.0F * contentScale,
+          .glyphSize = 38.0F * contentScale,
           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
       })
   ));
@@ -3884,16 +3908,17 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       })
   ));
 
-  // Animated progress scrubber bar
+  // Thin 4px progress scrubber bar (placed between track info and control buttons)
+  // Using a custom progress bar that shows album art as background when available
   instance.notchMediaProgressBar = static_cast<ProgressBar*>(instance.notchMediaCard->addChild(
       std::make_unique<ProgressBar>()
   ));
   instance.notchMediaProgressBar->setOrientation(ProgressBarOrientation::Horizontal);
-  instance.notchMediaProgressBar->setRadius(4.0F * contentScale);
+  instance.notchMediaProgressBar->setRadius(2.0F * contentScale);
   instance.notchMediaProgressBar->setFillColor(colorSpecFromRole(ColorRole::Primary));
   instance.notchMediaProgressBar->setTrackColor(colorSpecFromRole(ColorRole::SurfaceContainerHighest));
   instance.notchMediaProgressBar->setProgress(0.0F);
-  instance.notchMediaProgressBar->setSize(0.0F, 8.0F * contentScale);
+  instance.notchMediaProgressBar->setSize(0.0F, 4.0F * contentScale);
   instance.notchMediaProgressBar->setFlexGrow(1.0F);
 
   instance.notchMediaProgress = static_cast<Label*>(instance.notchMediaCard->addChild(
@@ -3948,38 +3973,58 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       })
   ));
 
-  // ---- Column 3 (24%): Stacked Volume & Brightness Cards ----
+  // ---- Column 3 (25%): Stacked Speaker + Microphone + Brightness Cards ----
   auto column3 = static_cast<Flex*>(mainContent->addChild(
        ui::flex(FlexDirection::Vertical, ui::FlexProps{
            .align = FlexAlign::Stretch,
            .gap = colGap,
-           .flexGrow = 0.24F,
+           .flexGrow = 0.25F,
        })
    ));
 
-   // Volume Card
-   instance.notchVolumeCard = static_cast<Flex*>(column3->addChild(
-       ui::flex(FlexDirection::Vertical, ui::FlexProps{
-           .align = FlexAlign::Stretch,
-           .gap = 8.0F * contentScale,
-           .flexGrow = 1.0F,
-       })
-   ));
-   styleCard(*instance.notchVolumeCard);
-   auto volumeHeader = instance.notchVolumeCard->addChild(
-       ui::flex(FlexDirection::Horizontal, ui::FlexProps{
-           .align = FlexAlign::Center,
-           .justify = FlexJustify::SpaceBetween,
-           .gap = 8.0F * contentScale,
-       })
-   );
-   volumeHeader->addChild(
-       ui::glyph({
-           .glyph = "volume-high",
-           .glyphSize = Style::baseGlyphSize * contentScale,
-           .color = colorSpecFromRole(ColorRole::OnSurface),
-       })
-   );
+// Volume Card (Speaker/Output)
+  instance.notchVolumeCard = static_cast<Flex*>(column3->addChild(
+      ui::flex(FlexDirection::Vertical, ui::FlexProps{
+          .align = FlexAlign::Stretch,
+          .gap = 4.0F * contentScale,  // Reduced from 8.0F to match brightness slider position
+          .padding = std::nullopt,
+          .paddingV = 8.0F * contentScale,
+          .flexGrow = 1.0F,
+      })
+  ));
+  styleCard(*instance.notchVolumeCard);
+
+  // Header row: Mute button | Volume % | Device name (flex, ellipsis) | Device selector (⋮)
+  auto volumeHeader = instance.notchVolumeCard->addChild(
+      ui::flex(FlexDirection::Horizontal, ui::FlexProps{
+          .align = FlexAlign::Center,
+          .justify = FlexJustify::SpaceBetween,
+          .gap = 8.0F * contentScale,
+      })
+  );
+
+  // Mute button (clickable icon button, toggles mute)
+  instance.notchVolumeMuteButton = static_cast<Button*>(volumeHeader->addChild(
+      ui::button({
+          .text = "",
+          .glyph = "volume-high",
+          .glyphSize = Style::baseGlyphSize * contentScale,
+          .controlHeight = 28.0F * contentScale,
+          .variant = ButtonVariant::Ghost,
+          .radius = 8.0F * contentScale,
+          .width = 28.0F * contentScale,
+          .height = 28.0F * contentScale,
+      })
+  ));
+  instance.notchVolumeMuteButton->setOnClick([&instance]() {
+    if (instance.m_audio) {
+      auto& audio = *instance.m_audio;
+      bool newMute = !audio.state().sinks.empty() && !audio.state().sinks[0].muted;
+      audio.setSinkMuted(instance.m_audio->state().defaultSinkId, newMute);
+    }
+  });
+
+  // Volume percentage label
   instance.notchVolumeLabel = static_cast<Label*>(volumeHeader->addChild(
       ui::label({
           .text = "50%",
@@ -3989,6 +4034,48 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       })
   ));
 
+  // Device name label (flex=1, minWidth=0, ellipsis) - clickable to open device picker
+  instance.notchVolumeSinkLabel = static_cast<Label*>(volumeHeader->addChild(
+      ui::label({
+          .text = "Built-in Audio",
+          .fontSize = Style::fontSizeCaption * contentScale,
+          .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+          .minWidth = 0.0F,
+          .maxLines = 1,
+          .ellipsize = TextEllipsize::End,
+          .flexGrow = 1.0F,
+      })
+  ));
+  instance.notchVolumeSinkLabel->setOnClick([&instance](const InputArea::PointerData&) {
+    if (instance.m_audio) {
+      instance.notchSubMenuOpen = true;
+      // TODO: open output device picker popup
+    }
+  });
+
+  // Device selector dropdown button (⋮) - opens device picker
+instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild(
+      ui::button({
+          .text = "",
+          .glyph = "menu",
+          .glyphSize = Style::baseGlyphSize * 0.9F * contentScale,
+          .controlHeight = 28.0F * contentScale,
+          .variant = ButtonVariant::Ghost,
+          .tooltip = "Select output device",
+          .radius = 8.0F * contentScale,
+          .width = 28.0F * contentScale,
+          .height = 28.0F * contentScale,
+          .onClick = [&instance]() {
+            if (instance.m_audio) {
+              instance.notchSubMenuOpen = true;
+            }
+          },
+      })
+  ));
+
+  // Add header row to card
+
+  // Volume slider
   instance.notchVolumeSlider = static_cast<Slider*>(instance.notchVolumeCard->addChild(
       ui::slider({
           .minValue = 0.0,
@@ -4010,11 +4097,120 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
           .onDragEnd = [&instance]() { /* Drag end handled by polling dragging() */ },
       })
   ));
-  instance.notchVolumeSinkLabel = static_cast<Label*>(instance.notchVolumeCard->addChild(
+
+// Microphone Card (Input)
+  instance.notchMicCard = static_cast<Flex*>(column3->addChild(
+      ui::flex(FlexDirection::Vertical, ui::FlexProps{
+          .align = FlexAlign::Stretch,
+          .gap = 4.0F * contentScale,  // Reduced to match brightness slider position
+          .padding = std::nullopt,
+          .paddingV = 8.0F * contentScale,
+          .flexGrow = 1.0F,
+      })
+  ));
+  styleCard(*instance.notchMicCard);
+
+  // Header row: Mute button | Volume % | Device name (flex, ellipsis) | Device selector (⋮)
+  auto micHeader = instance.notchMicCard->addChild(
+      ui::flex(FlexDirection::Horizontal, ui::FlexProps{
+          .align = FlexAlign::Center,
+          .justify = FlexJustify::SpaceBetween,
+          .gap = 8.0F * contentScale,
+      })
+  );
+
+  // Mute button (clickable icon button, toggles mute)
+  instance.notchMicMuteButton = static_cast<Button*>(micHeader->addChild(
+      ui::button({
+          .text = "",
+          .glyph = "microphone",
+          .glyphSize = Style::baseGlyphSize * contentScale,
+          .controlHeight = 28.0F * contentScale,
+          .variant = ButtonVariant::Ghost,
+          .radius = 8.0F * contentScale,
+          .width = 28.0F * contentScale,
+          .height = 28.0F * contentScale,
+      })
+  ));
+  instance.notchMicMuteButton->setOnClick([&instance]() {
+    if (instance.m_audio) {
+      auto& audio = *instance.m_audio;
+      bool newMute = !audio.state().sources.empty() && !audio.state().sources[0].muted;
+      audio.setSourceMuted(instance.m_audio->state().defaultSourceId, newMute);
+    }
+  });
+
+  // Microphone volume percentage label
+  instance.notchMicLabel = static_cast<Label*>(micHeader->addChild(
       ui::label({
-          .text = "Built-in Audio",
-          .fontSize = Style::fontSizeMini * contentScale,
+          .text = "50%",
+          .fontSize = Style::fontSizeCaption * contentScale,
+          .fontWeight = FontWeight::Medium,
           .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+      })
+  ));
+
+  // Device name label (flex=1, minWidth=0, ellipsis) - clickable to open device picker
+  instance.notchMicSourceLabel = static_cast<Label*>(micHeader->addChild(
+      ui::label({
+          .text = "Built-in Microphone",
+          .fontSize = Style::fontSizeCaption * contentScale,
+          .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+          .minWidth = 0.0F,
+          .maxLines = 1,
+          .ellipsize = TextEllipsize::End,
+          .flexGrow = 1.0F,
+      })
+  ));
+  instance.notchMicSourceLabel->setOnClick([&instance](const InputArea::PointerData&) {
+    if (instance.m_audio) {
+      instance.notchSubMenuOpen = true;
+      // TODO: open input device picker popup
+    }
+  });
+
+// Device selector dropdown button (⋮) - opens device picker
+  instance.notchMicDeviceSelector = static_cast<Button*>(micHeader->addChild(
+      ui::button({
+          .text = "",
+          .glyph = "menu",
+          .glyphSize = Style::baseGlyphSize * 0.9F * contentScale,
+          .controlHeight = 28.0F * contentScale,
+          .variant = ButtonVariant::Ghost,
+          .tooltip = "Select input device",
+          .radius = 8.0F * contentScale,
+          .width = 28.0F * contentScale,
+          .height = 28.0F * contentScale,
+          .onClick = [&instance]() {
+            if (instance.m_audio) {
+              instance.notchSubMenuOpen = true;
+            }
+          },
+      })
+  ));
+
+  // Add header row to card
+
+  // Microphone slider
+  instance.notchMicSlider = static_cast<Slider*>(instance.notchMicCard->addChild(
+      ui::slider({
+          .minValue = 0.0,
+          .maxValue = 100.0,
+          .step = 1.0,
+          .value = 50.0,
+          .trackHeight = 4.0F * contentScale,
+          .thumbSize = 14.0F * contentScale,
+          .controlHeight = controlH,
+          .flexGrow = 1.0F,
+          .onValueChanged = [&instance](double v) {
+            if (instance.notchMicLabel != nullptr) {
+              char buf[16];
+              std::snprintf(buf, sizeof(buf), "%.0f%%", v);
+              instance.notchMicLabel->setText(buf);
+            }
+            if (instance.m_audio) instance.m_audio->setSourceVolume(instance.m_audio->state().defaultSourceId, static_cast<float>(v) / 100.0F);
+          },
+          .onDragEnd = [&instance]() { /* Drag end handled by polling dragging() */ },
       })
   ));
 
@@ -4023,10 +4219,14 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       ui::flex(FlexDirection::Vertical, ui::FlexProps{
           .align = FlexAlign::Stretch,
           .gap = 8.0F * contentScale,
+          .padding = std::nullopt,
+          .paddingV = 8.0F * contentScale,
           .flexGrow = 1.0F,
       })
   ));
   styleCard(*instance.notchBrightnessCard);
+
+  // Header row: Sun icon | Brightness %
   auto brightnessHeader = instance.notchBrightnessCard->addChild(
       ui::flex(FlexDirection::Horizontal, ui::FlexProps{
           .align = FlexAlign::Center,
@@ -4041,6 +4241,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
           .color = colorSpecFromRole(ColorRole::OnSurface),
       })
   );
+
   instance.notchBrightnessLabel = static_cast<Label*>(brightnessHeader->addChild(
       ui::label({
           .text = "50%",
@@ -4050,6 +4251,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       })
   ));
 
+  // Brightness slider
   instance.notchBrightnessSlider = static_cast<Slider*>(instance.notchBrightnessCard->addChild(
       ui::slider({
           .minValue = 0.0,
@@ -4071,14 +4273,6 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
           .onDragEnd = [&instance]() { /* Drag end handled by polling dragging() */ },
       })
   ));
-  instance.notchBrightnessLabel = static_cast<Label*>(brightnessHeader->addChild(
-      ui::label({
-          .text = "50%",
-          .fontSize = Style::fontSizeCaption * contentScale,
-          .fontWeight = FontWeight::Medium,
-          .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
-      })
-  ));
 
   // ---- Column 4 (20%): 2x2 Quick Toggle Tiles (Wi-Fi, Bluetooth, DND, Caffeine) ----
   instance.notchToggleGrid = static_cast<GridView*>(mainContent->addChild(
@@ -4090,32 +4284,53 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
   instance.notchToggleGrid->setPadding(innerPad);
   instance.notchToggleGrid->setStretchItems(true);
   instance.notchToggleGrid->setUniformCellSize(true);
-  instance.notchToggleGrid->setFlexGrow(0.20F);
+  instance.notchToggleGrid->setFlexGrow(0.23F);
 
 auto createToggleTile = [&](const char* glyphOn, const char* glyphOff, const char* label, const char* tooltip,
-                              std::function<bool()> getActive, std::function<void(bool)> setActive) {
-    // Create button first
+                              std::function<bool()> getActive, std::function<void(bool)> setActive,
+                              Label** labelPtrOut) {
+    // Create a vertical flex container for icon + label (stacked vertically)
+    auto tileNode = ui::flex(FlexDirection::Vertical, ui::FlexProps{
+        .align = FlexAlign::Center,
+        .justify = FlexJustify::Center,
+        .gap = 4.0F * contentScale,
+    });
+    auto labelNode = static_cast<Label*>(tileNode->addChild(
+        ui::label({
+            .text = label,
+            .fontSize = Style::fontSizeCaption * 0.85F * contentScale,
+            .color = getActive() ? colorSpecFromRole(ColorRole::OnPrimary) : colorSpecFromRole(ColorRole::OnSurface),
+        })
+    ));
+    *labelPtrOut = labelNode;
+    // Wrap in a button for click handling - use button's glyph property instead of separate glyph node
     auto btn = static_cast<Button*>(instance.notchToggleGrid->addChild(
         ui::button({
-            .text = label,
+            .text = "",
             .glyph = getActive() ? glyphOn : glyphOff,
-            .fontSize = Style::fontSizeCaption * contentScale,
-            .glyphSize = Style::baseGlyphSize * 1.1F * contentScale,
-            .controlHeight = 56.0F * contentScale,
-            .contentAlign = ButtonContentAlign::Center,
-            .variant = getActive() ? ButtonVariant::Primary : ButtonVariant::Default,
+            .glyphSize = Style::baseGlyphSize * 1.3F * contentScale,
+            .controlHeight = 64.0F * contentScale,  // Taller for vertical stacking
+            .variant = getActive() ? ButtonVariant::Ghost : ButtonVariant::Default,
             .tooltip = tooltip,
-            .paddingH = 12.0F * contentScale,
             .radius = Style::scaledRadiusLg(contentScale),
         })
     ));
-    // Set onClick handler after button creation
-    btn->setOnClick([&instance, getActive, setActive, btn, glyphOn, glyphOff]() {
+    // Add the flex content as button content (icon is now on the button itself)
+    btn->addChild(std::move(tileNode));
+    // Store label node reference for color updates
+    Label* labelPtr = labelNode;
+    // Set onClick handler
+    btn->setOnClick([&instance, getActive, setActive, btn, glyphOn, glyphOff, labelPtr]() {
       bool newState = !getActive();
       setActive(newState);
       if (btn != nullptr) {
+        btn->setVariant(newState ? ButtonVariant::Ghost : ButtonVariant::Default);
+        // Update glyph on the button itself
         btn->setGlyph(newState ? glyphOn : glyphOff);
-        btn->setVariant(newState ? ButtonVariant::Primary : ButtonVariant::Default);
+        // Update label color for contrast (onPrimary when active, onSurface when inactive)
+        if (labelPtr != nullptr) {
+          labelPtr->setColor(newState ? colorSpecFromRole(ColorRole::OnPrimary) : colorSpecFromRole(ColorRole::OnSurface));
+        }
       }
     });
     return btn;
@@ -4125,25 +4340,29 @@ auto createToggleTile = [&](const char* glyphOn, const char* glyphOff, const cha
   instance.notchWifiToggle = createToggleTile(
       "wifi", "wifi-off", "Wi-Fi", "Toggle Wi-Fi",
       [&instance]() { return instance.m_network ? instance.m_network->state().wirelessEnabled : false; },
-      [&instance](bool on) { if (instance.m_network) instance.m_network->setWirelessEnabled(on); }
+      [&instance](bool on) { if (instance.m_network) instance.m_network->setWirelessEnabled(on); },
+      &instance.notchWifiLabel
   );
   // Bluetooth tile
   instance.notchBluetoothToggle = createToggleTile(
-      "bluetooth", "bluetooth-off", "Bluetooth", "Toggle Bluetooth",
+      "bluetooth", "bluetooth-off", "BT", "Toggle Bluetooth",
       [&instance]() { return instance.m_bluetooth ? instance.m_bluetooth->state().powered : false; },
-      [&instance](bool on) { if (instance.m_bluetooth) instance.m_bluetooth->setPowered(on); }
+      [&instance](bool on) { if (instance.m_bluetooth) instance.m_bluetooth->setPowered(on); },
+      &instance.notchBluetoothLabel
   );
   // DND tile
   instance.notchDndToggle = createToggleTile(
-      "bell-off", "bell", "Do Not Disturb", "Toggle DND",
+      "bell-off", "bell", "DND", "Toggle DND",
       [&instance]() { return instance.m_notifications ? instance.m_notifications->doNotDisturb() : false; },
-      [&instance](bool on) { if (instance.m_notifications) instance.m_notifications->toggleDoNotDisturb(); }
+      [&instance](bool on) { if (instance.m_notifications) instance.m_notifications->toggleDoNotDisturb(); },
+      &instance.notchDndLabel
   );
   // Caffeine tile
   instance.notchCaffeineToggle = createToggleTile(
       "caffeine-on", "caffeine-off", "Caffeine", "Toggle Caffeine",
       [&instance]() { return instance.m_idleInhibitor ? instance.m_idleInhibitor->enabled() : false; },
-      [&instance](bool on) { if (instance.m_idleInhibitor) instance.m_idleInhibitor->setEnabled(on); }
+      [&instance](bool on) { if (instance.m_idleInhibitor) instance.m_idleInhibitor->setEnabled(on); },
+      &instance.notchCaffeineLabel
   );
  }
 
@@ -4212,6 +4431,35 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
   // Notch background (rounded pill) — positioned dynamically inside fixed surface.
   instance.bg = static_cast<Box*>(instance.slideRoot->addChild(ui::box()));
 
+  // ===== SET INITIAL BG STYLE WITH PROPER RADII (flat top, rounded bottom) =====
+  // Ensures rounded corners from the very first frame, before any hover/updateNotchGeometry call.
+{
+    const float collapsedRadius = static_cast<float>(cfg.notchCollapsedRadius);
+    const Radii notchRadii{0.0F, 0.0F, collapsedRadius, collapsedRadius};
+    const CornerShapes notchCorners{
+        CornerShape::Convex, CornerShape::Convex, CornerShape::Convex, CornerShape::Convex
+    };
+    const RoundedRectStyle bgStyle{
+        .fill = rgba(0.0F, 0.0F, 0.0F, 1.0F),
+        .border = Color{0.0F, 0.0F, 0.0F, 0.0F},
+        .fillMode = FillMode::Solid,
+        .corners = notchCorners,
+        .logicalInset = {0, 0, 0, 0},
+        .radius = notchRadii,
+        .softness = 0.0F,
+        .borderWidth = 0.0F,
+    };
+    instance.bg->setStyle(bgStyle);
+    const float pillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
+    const float pillY = static_cast<float>(cfg.notchTopMargin);
+    instance.bg->setStyle(bgStyle);
+    instance.bg->setPosition(pillX, pillY);
+    instance.bg->setSize(maxW, maxH);
+    // ALWAYS visible in both collapsed and expanded states
+    instance.bg->setVisible(true);
+    instance.bg->setOpacity(1.0F);
+  }
+
   // Shadow
   if (cfg.shadow && surface_shadow::enabled(cfg.shadow, shadowConfig)) {
     instance.shadow = static_cast<Box*>(instance.slideRoot->addChild(
@@ -4244,6 +4492,36 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
   hoverUnderlay->setSize(w, h);
   instance.hoverUnderlay = instance.slideRoot->addChild(std::move(hoverUnderlay));
 
+// ===== HOVER DETECTION AREA — Place AFTER contentClip/underlay so it's ON TOP in z-order =====
+  // This ensures it receives pointer enter/leave/motion events for the entire pill area.
+  // acceptedButtons = 0 means it won't consume button clicks/drags, which pass through to child widgets.
+  // hitTestVisible = false so it doesn't intercept pointer events from reaching child widgets.
+  // Expand/collapse is driven by Wayland pointer events in Bar::onPointerEvent.
+  instance.notchHoverArea = static_cast<InputArea*>(instance.slideRoot->addChild(
+      ui::inputArea({
+          .acceptedButtons = 0,
+          .hitTestVisible = false,
+      })
+  ));
+  instance.notchHoverArea->setPosition(pillX, pillY);
+  instance.notchHoverArea->setSize(maxW, maxH);
+
+  // Track pointer position within the hover area to prevent false leave events
+  // when moving between notchHoverArea and child widgets inside contentClip.
+  instance.notchHoverArea->setOnMotion([inst = &instance](const InputArea::PointerData& data) {
+    // Update last known pointer position within the notch area
+    inst->lastPointerSx = data.localX;
+    inst->lastPointerSy = data.localY;
+    // Ensure pointerInside stays true while moving within hover area
+    inst->notchPointerInside = true;
+    inst->notchCollapseTimer.stop();
+  });
+instance.notchHoverArea->setOnClick([this, inst = &instance](const InputArea::PointerData& data) {
+    if (data.button == BTN_LEFT && inst->barConfig.notchClickExpand) {
+      animateNotchExpand(*inst, !inst->notchExpanded);
+    }
+  });
+
   // Create notch content root (will hold collapsed/expanded widgets)
   instance.notchContentRoot = instance.contentClip->addChild(ui::node({}));
 
@@ -4254,13 +4532,13 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
   collapsedContainer->setParticipatesInLayout(false);
   instance.notchCollapsedContainer = instance.notchContentRoot->addChild(std::move(collapsedContainer));
 
-  // Album art thumbnail (far left, vertically centered, 20x20px, radius 5px).
+  // Album art thumbnail (far left, vertically centered, 22x22px, radius 6px).
   instance.notchAlbumArt = static_cast<Image*>(instance.notchCollapsedContainer->addChild(
       ui::image({
           .fit = ImageFit::Cover,
-          .radius = 5.0F * contentScale,
-          .width = 20.0F * contentScale,
-          .height = 20.0F * contentScale,
+          .radius = 6.0F * contentScale,
+          .width = 22.0F * contentScale,
+          .height = 22.0F * contentScale,
       })
   ));
   instance.notchAlbumArt->setVisible(false);
@@ -4276,6 +4554,8 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
   instance.notchFallbackGlyph->setVisible(false);
 
   // Visualizer bars: 5 thin vertical bars on the far right.
+  // Animated at 60fps when MPRIS playback is active (locked to wl_surface::frame).
+  // When paused/stopped: rest at flat 4px dots, stop frame callbacks.
   constexpr int kVisualizerBars = 5;
   const float barW = 3.0F * contentScale;
   [[maybe_unused]] const float barGap = 3.0F * contentScale;
@@ -4309,7 +4589,7 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
   // Layout all sections once
   instance.notchContentRoot->layout(renderer);
 
-  // Position the notch background pill at its dynamic bounds inside the fixed surface.
+// Position the notch background pill at its dynamic bounds inside the fixed surface.
   // pillX = (maxSurfaceW - currentPillW) * 0.5f (centered horizontally)
   // pillY = topMargin (flush to top edge of surface content area)
   if (instance.bg != nullptr) {
@@ -4320,51 +4600,6 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
     instance.contentClip->setPosition(pillX, pillY);
     instance.contentClip->setSize(maxW, maxH);
   }
-
-  // Create hover detection area covering current pill bounds in surface-local coords.
-  // Matches wl_surface_set_input_region exactly. Does NOT accept buttons so clicks
-  // pass through to child widgets when expanded.
-  instance.notchHoverArea = static_cast<InputArea*>(instance.slideRoot->addChild(
-      ui::inputArea({
-          .acceptedButtons = 0,
-      })
-  ));
-  instance.notchHoverArea->setPosition(pillX, pillY);
-  instance.notchHoverArea->setSize(maxW, maxH);
-
-  // Wire up hover callbacks for notch area
-  instance.notchHoverArea->setOnEnter([this, inst = &instance]([[maybe_unused]] const InputArea::PointerData& data) {
-    inst->notchPointerInside = true;
-    inst->notchCollapseTimer.stop();
-    if (inst->barConfig.notchHoverExpand && !isFullscreenFocused()) {
-      animateNotchExpand(*inst, true);
-    }
-  });
-  instance.notchHoverArea->setOnLeave([this, inst = &instance]() {
-    inst->notchPointerInside = false;
-    // 180ms grace timer before collapsing — prevents flicker on accidental cursor slip
-    if (inst->barConfig.notchCollapseDelayMs > 0) {
-      inst->notchCollapseTimer.start(
-          std::chrono::milliseconds(inst->barConfig.notchCollapseDelayMs),
-          [this, inst]() {
-            // Only collapse if not pinned, not hovering a slider, no sub-menu open, and pointer not inside
-            if (!inst->notchPinned && !inst->notchPointerInside && inst->isNotchMode && inst->notchExpanded &&
-                !inst->notchSliderActive && !inst->notchSubMenuOpen) {
-              animateNotchExpand(*inst, false);
-            }
-          }
-      );
-    } else {
-      if (!inst->notchPinned && !inst->notchSliderActive && !inst->notchSubMenuOpen) {
-        animateNotchExpand(*inst, false);
-      }
-    }
-  });
-  instance.notchHoverArea->setOnClick([this, inst = &instance](const InputArea::PointerData& data) {
-    if (data.button == BTN_LEFT && inst->barConfig.notchClickExpand) {
-      animateNotchExpand(*inst, !inst->notchExpanded);
-    }
-  });
 
   // Wire up InputDispatcher for this instance
   instance.inputDispatcher.setSceneRoot(instance.sceneRoot.get());
@@ -4391,6 +4626,7 @@ void Bar::updateNotchGeometry(BarInstance& instance, std::uint32_t width, std::u
   const auto& shadowConfig = m_config->config().shell.shadow;
   const float progress = instance.notchExpandProgress;
   const auto& cfg = instance.barConfig;
+  const float contentScale = static_cast<float>(cfg.scale);
 
   // Compute responsive notch dimensions
   const NotchDimensions dims = computeNotchDimensions(instance, progress);
@@ -4449,8 +4685,12 @@ void Bar::updateNotchGeometry(BarInstance& instance, std::uint32_t width, std::u
     instance.bg->setStyle(bgStyle);
     const float pillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
     const float pillY = static_cast<float>(cfg.notchTopMargin);
+    instance.bg->setStyle(bgStyle);
     instance.bg->setPosition(pillX, pillY);
     instance.bg->setSize(maxW, maxH);
+// ALWAYS visible in both collapsed and expanded states
+  instance.bg->setVisible(true);
+  instance.bg->setOpacity(1.0F);
   }
 
   // Update shadow
@@ -4596,7 +4836,10 @@ void Bar::layoutNotchWidgets(BarInstance& instance, Renderer& renderer, [[maybe_
 
     // Position and size main content grid (pillW - 32px width, pillH - 72px height, at 16px from left, 56px from top)
     if (instance.notchBentoGrid != nullptr) {
-      instance.notchBentoGrid->setSize(pillW - 32.0F * contentScale, pillH - 72.0F * contentScale);
+      // pillH - headerH(36) - headerGap(8) - topPad(16) - bottomPad(16) = pillH - 72
+      // But we need 16px clear bottom padding for 24px rounded corners
+      // So: pillH - headerH(36) - headerGap(8) - topPad(16) - bottomPad(16) = pillH - 76
+      instance.notchBentoGrid->setSize(pillW - 32.0F * contentScale, pillH - 76.0F * contentScale);
     }
 
     // The Bento grid uses Flex/GridView layout — just trigger a layout pass
@@ -4880,6 +5123,10 @@ void Bar::prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool needsL
   // Initialize scene on first frame
   if (instance.sceneRoot == nullptr) {
     initNotchScene(instance, instance.surface->width(), instance.surface->height());
+    // Request initial frame tick to ensure the surface is mapped and receives pointer events
+    if (instance.surface != nullptr) {
+      instance.surface->requestFrameTick();
+    }
   }
 
   m_renderContext->makeCurrent(instance.surface->renderTarget());
@@ -5004,6 +5251,47 @@ void Bar::prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool needsL
       if (instance.notchDateLabel != nullptr) instance.notchDateLabel->setText(dateBuf);
     }
 
+    // Update system info in Column 1 (username@hostname • uptime • compositor)
+    if (instance.notchSystemInfoLabel != nullptr) {
+      // Get username
+      std::string username = "user";
+      if (auto* pw = getpwuid(getuid())) {
+        username = pw->pw_name;
+      } else if (const char* envUser = getenv("USER")) {
+        username = envUser;
+      }
+
+      // Get hostname
+      char hostname[256] = {0};
+      std::string hostnameStr = "hostname";
+      if (gethostname(hostname, sizeof(hostname)) == 0) {
+        hostnameStr = hostname;
+      }
+
+      // Get uptime
+      std::string uptimeStr = "up ?";
+      std::ifstream uptimeFile("/proc/uptime");
+      if (uptimeFile) {
+        double uptimeSeconds;
+        uptimeFile >> uptimeSeconds;
+        int64_t totalSecs = static_cast<int64_t>(uptimeSeconds);
+        int64_t days = totalSecs / 86400;
+        int64_t hours = (totalSecs % 86400) / 3600;
+        int64_t mins = (totalSecs % 3600) / 60;
+        std::ostringstream oss;
+        if (days > 0) oss << days << "d ";
+        if (hours > 0 || days > 0) oss << hours << "h ";
+        oss << mins << "m";
+        uptimeStr = "up " + oss.str();
+      }
+
+      // Get compositor name
+      std::string compositor = "Niri"; // Default
+
+      std::string sysInfo = username + "@" + hostnameStr + " • " + uptimeStr + " • " + compositor;
+      instance.notchSystemInfoLabel->setText(sysInfo);
+    }
+
     // Update collapsed-pill element visibility/positions every frame (not just in layout phase).
     // Ensures the music glyph and visualizer bars stay visible when collapsed.
     {
@@ -5065,6 +5353,74 @@ void Bar::prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool needsL
         instance.notchBentoRoot->setOpacity(expandedOpacity);
         instance.notchBentoRoot->setVisible(!collapsed);
       }
+    }
+
+    // Sync toggle tile states from services (live startup states)
+    if (instance.notchWifiToggle != nullptr && instance.m_network) {
+      bool wifiActive = instance.m_network->state().wirelessEnabled;
+      instance.notchWifiToggle->setVariant(wifiActive ? ButtonVariant::Primary : ButtonVariant::Default);
+      instance.notchWifiToggle->setGlyph(wifiActive ? "wifi" : "wifi-off");
+      if (instance.notchWifiLabel != nullptr) {
+        instance.notchWifiLabel->setColor(wifiActive ? colorSpecFromRole(ColorRole::OnPrimary) : colorSpecFromRole(ColorRole::OnSurface));
+      }
+    }
+    if (instance.notchBluetoothToggle != nullptr && instance.m_bluetooth) {
+      bool btActive = instance.m_bluetooth->state().powered;
+      instance.notchBluetoothToggle->setVariant(btActive ? ButtonVariant::Primary : ButtonVariant::Default);
+      instance.notchBluetoothToggle->setGlyph(btActive ? "bluetooth" : "bluetooth-off");
+      if (instance.notchBluetoothLabel != nullptr) {
+        instance.notchBluetoothLabel->setColor(btActive ? colorSpecFromRole(ColorRole::OnPrimary) : colorSpecFromRole(ColorRole::OnSurface));
+      }
+    }
+    if (instance.notchDndToggle != nullptr && instance.m_notifications) {
+      bool dndActive = instance.m_notifications->doNotDisturb();
+      instance.notchDndToggle->setVariant(dndActive ? ButtonVariant::Primary : ButtonVariant::Default);
+      instance.notchDndToggle->setGlyph(dndActive ? "bell-off" : "bell");
+      if (instance.notchDndLabel != nullptr) {
+        instance.notchDndLabel->setColor(dndActive ? colorSpecFromRole(ColorRole::OnPrimary) : colorSpecFromRole(ColorRole::OnSurface));
+      }
+    }
+    if (instance.notchCaffeineToggle != nullptr && instance.m_idleInhibitor) {
+      bool caffeineActive = instance.m_idleInhibitor->enabled();
+      instance.notchCaffeineToggle->setVariant(caffeineActive ? ButtonVariant::Primary : ButtonVariant::Default);
+      instance.notchCaffeineToggle->setGlyph(caffeineActive ? "caffeine-on" : "caffeine-off");
+      if (instance.notchCaffeineLabel != nullptr) {
+        instance.notchCaffeineLabel->setColor(caffeineActive ? colorSpecFromRole(ColorRole::OnPrimary) : colorSpecFromRole(ColorRole::OnSurface));
+      }
+    }
+
+    // Sync microphone mute state and volume
+    if (instance.notchMicMuteButton != nullptr && instance.m_audio) {
+      bool micMute = instance.m_audio->state().sources.empty() || instance.m_audio->state().sources[0].muted;
+      instance.notchMicMuteButton->setGlyph(micMute ? "microphone-off" : "microphone");
+      instance.notchMicMuteButton->setVariant(micMute ? ButtonVariant::Default : ButtonVariant::Ghost);
+    }
+    if (instance.notchMicLabel != nullptr && instance.m_audio) {
+      float micVol = instance.m_audio->state().sources.empty() ? 0.0F : instance.m_audio->state().sources[0].volume;
+      char buf[16];
+      std::snprintf(buf, sizeof(buf), "%.0f%%", micVol * 100.0F);
+      instance.notchMicLabel->setText(buf);
+    }
+    if (instance.notchMicSlider != nullptr && instance.m_audio) {
+      float micVol = instance.m_audio->state().sources.empty() ? 0.0F : instance.m_audio->state().sources[0].volume;
+      instance.notchMicSlider->setValue(micVol * 100.0);
+    }
+
+    // Sync speaker mute state and volume
+    if (instance.notchVolumeMuteButton != nullptr && instance.m_audio) {
+      bool volMute = instance.m_audio->state().sinks.empty() || instance.m_audio->state().sinks[0].muted;
+      instance.notchVolumeMuteButton->setGlyph(volMute ? "volume-off" : "volume-high");
+      instance.notchVolumeMuteButton->setVariant(volMute ? ButtonVariant::Default : ButtonVariant::Ghost);
+    }
+    if (instance.notchVolumeLabel != nullptr && instance.m_audio) {
+      float vol = instance.m_audio->state().sinks.empty() ? 0.0F : instance.m_audio->state().sinks[0].volume;
+      char buf[16];
+      std::snprintf(buf, sizeof(buf), "%.0f%%", vol * 100.0F);
+      instance.notchVolumeLabel->setText(buf);
+    }
+    if (instance.notchVolumeSlider != nullptr && instance.m_audio) {
+      float vol = instance.m_audio->state().sinks.empty() ? 0.0F : instance.m_audio->state().sinks[0].volume;
+      instance.notchVolumeSlider->setValue(vol * 100.0);
     }
 
     return;
@@ -5217,6 +5573,10 @@ bool Bar::onPointerEvent(const PointerEvent& event) {
     if (barSupportsSlideBehavior(m_hoveredInstance->barConfig) && m_hoveredInstance->sceneRoot != nullptr) {
       revealAutoHideBar(*m_hoveredInstance);
     }
+    // Notch-specific: drive expand on pointer enter for Dynamic Notch mode.
+    if (entered->isNotchMode && entered->barConfig.notchHoverExpand && !isFullscreenFocused()) {
+      animateNotchExpand(*entered, true);
+    }
     break;
   }
   case PointerEvent::Type::Leave: {
@@ -5231,6 +5591,26 @@ bool Bar::onPointerEvent(const PointerEvent& event) {
         startHideFadeOut(*m_hoveredInstance);
       }
       m_hoveredInstance = nullptr;
+    }
+    // Notch-specific: drive collapse on pointer leave for Dynamic Notch mode.
+    if (targetInstance != nullptr && targetInstance->isNotchMode) {
+      targetInstance->pointerInside = false;
+      // 180ms grace timer before collapsing — prevents flicker on accidental cursor slip
+      if (targetInstance->barConfig.notchCollapseDelayMs > 0) {
+        targetInstance->notchCollapseTimer.start(
+            std::chrono::milliseconds(targetInstance->barConfig.notchCollapseDelayMs),
+            [this, targetInstance]() {
+              if (!targetInstance->notchPinned && !targetInstance->pointerInside && targetInstance->isNotchMode && targetInstance->notchExpanded &&
+                  !targetInstance->notchSliderActive && !targetInstance->notchSubMenuOpen) {
+                animateNotchExpand(*targetInstance, false);
+              }
+            }
+        );
+      } else {
+        if (!targetInstance->notchPinned && !targetInstance->notchSliderActive && !targetInstance->notchSubMenuOpen) {
+          animateNotchExpand(*targetInstance, false);
+        }
+      }
     }
     break;
   }
@@ -5502,12 +5882,15 @@ void Bar::animateNotchExpand(BarInstance& instance, bool expand) {
           const float maxH = std::min(notchH, static_cast<float>(instance.outputLogicalHeight) * 0.45F);
           const float pillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
           const float pillY = static_cast<float>(instance.barConfig.notchTopMargin);
+          kLog.debug("[NOTCH_DEBUG] animate progress={} notchW={} notchH={} maxW={} maxH={} pillX={} pillY={}",
+              progress, notchW, notchH, maxW, maxH, pillX, pillY);
           updateNotchInputRegion(instance, pillX, pillY, maxW, maxH);
         }
       },
       [this, &instance, expand]() {
         instance.notchAnimationId = 0;
         instance.notchExpanded = expand;
+        kLog.debug("[NOTCH_DEBUG] animate complete: expand={} notchProgress={}", expand, instance.notchExpandProgress);
         // Final input region update
         if (instance.surface != nullptr) {
           const NotchDimensions dims = computeNotchDimensions(instance, expand ? 1.0F : 0.0F);
@@ -5548,13 +5931,22 @@ void Bar::animateNotchExpand(BarInstance& instance, bool expand) {
 void Bar::updateNotchInputRegion(BarInstance& instance, float pillX, float pillY, float pillW, float pillH) {
   if (!instance.isNotchMode || instance.surface == nullptr) return;
 
-  // wl_surface_set_input_region takes surface-local coordinates.
-  // The input region covers exactly the current pill rectangle so transparent
-  // areas around the collapsed pill pass clicks/hovers straight through to
-  // underlying windows, and hover reliably fires every time.
-  const int x = static_cast<int>(std::lround(pillX));
-  const int y = static_cast<int>(std::lround(pillY));
-  const InputRect rect{x, y, static_cast<int>(std::lround(pillW)), static_cast<int>(std::lround(pillH))};
+  // Use the EXACT current pill bounds (based on expansion progress) for the input region.
+  // When collapsed: use collapsed pill rect (200x32)
+  // When expanded: use expanded bounds (900x360)
+  // This ensures clicks on expanded Bento cards reach the surface,
+  // and clicks outside the collapsed pill pass through to windows below.
+  const bool expanded = instance.notchExpandProgress > 0.5F;
+  const NotchDimensions dims = computeNotchDimensions(instance, expanded ? 1.0F : 0.0F);
+  const float fx = pillX;
+  const float fy = 0.0F;
+  const float fw = expanded ? dims.expandedWidth : dims.collapsedWidth;
+  const float fh = expanded ? dims.expandedHeight : dims.collapsedHeight;
+  const int ix = static_cast<int>(std::lround(pillX));
+  const int iy = 0;
+  const int iw = static_cast<int>(std::lround(fw));
+  const int ih = static_cast<int>(std::lround(fh));
+  const InputRect rect{ix, iy, iw, ih};
 
   instance.surface->setInputRegion({rect});
 }
