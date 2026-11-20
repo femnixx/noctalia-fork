@@ -3,6 +3,7 @@
 #include "system/app_identity.h"
 #include "system/internal_app_metadata.h"
 #include "util/string_utils.h"
+#include "core/log.h"
 #include "wlr-foreign-toplevel-management-unstable-v1-client-protocol.h"
 
 #include <algorithm>
@@ -10,6 +11,8 @@
 #include <utility>
 
 namespace {
+
+  constexpr Logger kLog("wayland");
 
   void
   managerToplevel(void* data, zwlr_foreign_toplevel_manager_v1* /*manager*/, zwlr_foreign_toplevel_handle_v1* handle) {
@@ -270,6 +273,18 @@ bool WaylandToplevels::anyFullscreen() const {
   return std::ranges::any_of(m_handles, [](const auto& entry) {
     return entry.second.fullscreen && !entry.second.minimized;
   });
+}
+
+bool WaylandToplevels::anyFullscreenOnOutput(wl_output* output) const {
+  if (output == nullptr) {
+    return false;
+  }
+  for (const auto& entry : m_handles) {
+    if (entry.second.fullscreen && entry.second.activated && !entry.second.minimized && entry.second.output == output) {
+      return true;
+    }
+  }
+  return false;
 }
 
 wl_output* WaylandToplevels::currentOutput() const {

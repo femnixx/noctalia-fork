@@ -166,7 +166,7 @@ private:
   // Dynamic Notch member functions
   void animateNotchExpand(BarInstance& instance, bool expand);
   void updateNotchInputRegion(BarInstance& instance, float pillX, float pillY, float pillW, float pillH);
-  bool isFullscreenFocused() const;
+  bool isFullscreenFocused(wl_output* output) const;
   void triggerNotchExpand(BarInstance& instance);
   void startNotchVisualizerAnimation(BarInstance& instance);
   void stopNotchVisualizerAnimation(BarInstance& instance);

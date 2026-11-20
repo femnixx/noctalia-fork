@@ -36,12 +36,15 @@ namespace {
 
 Slider::Slider() {
   auto track = std::make_unique<RectNode>();
+  track->setHitTestVisible(false);
   m_track = static_cast<RectNode*>(addChild(std::move(track)));
 
   auto fill = std::make_unique<RectNode>();
+  fill->setHitTestVisible(false);
   m_fill = static_cast<RectNode*>(addChild(std::move(fill)));
 
   auto thumb = std::make_unique<RectNode>();
+  thumb->setHitTestVisible(false);
   m_thumb = static_cast<RectNode*>(addChild(std::move(thumb)));
 
   auto area = std::make_unique<InputArea>();

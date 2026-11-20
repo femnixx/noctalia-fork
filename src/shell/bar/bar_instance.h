@@ -110,7 +110,8 @@ struct BarInstance {
   Node* shadowRightClip = nullptr;
   Box* shadowLeft = nullptr;
   Box* shadowRight = nullptr;
-  Node* contentClip = nullptr;
+  Node* contentClip = nullptr;        // Clips to pill bounds (Node for visual clipping only)
+  // Unclipped layer between the bar background and contentClip; hosts the hover pills of
   // Unclipped layer between the bar background and contentClip; hosts the hover pills of
   // capsule-less widgets so they neither affect layout nor get clipped at section boundaries.
   Node* hoverUnderlay = nullptr;
@@ -144,6 +145,7 @@ struct BarInstance {
   float notchExpandProgress = 0.0F;           // 0.0 = collapsed, 1.0 = expanded
   AnimationManager::Id notchAnimationId = 0;
   Timer notchCollapseTimer;                   // Debounce timer for pointer leave (180ms grace)
+  Timer notchExpandTimer;                     // Debounce timer for pointer enter (expand delay)
   Timer notchAutoCollapseTimer;               // Auto-collapse timeout timer
   // Fixed surface dimensions (set at startup, never changed during animation).
   // All pill geometry is rendered inside this fixed bounding box.
