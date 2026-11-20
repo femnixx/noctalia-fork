@@ -4279,6 +4279,64 @@ instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild
       })
   ));
 
+  // ---- Column 4 (20%): Notifications Card + Quick Toggle Tiles ----
+  // Notification card showing latest notification
+  instance.notchNotificationCard = static_cast<Flex*>(mainContent->addChild(
+      ui::flex(FlexDirection::Vertical, ui::FlexProps{
+          .align = FlexAlign::Stretch,
+          .justify = FlexJustify::SpaceBetween,
+          .gap = 8.0F * contentScale,
+          .padding = Style::cardPadding * contentScale,
+          .flexGrow = 0.3F,
+      })
+  ));
+  styleCard(*instance.notchNotificationCard);
+
+  instance.notchNotificationTitle = static_cast<Label*>(instance.notchNotificationCard->addChild(
+      ui::label({
+          .text = "Notifications",
+          .fontSize = Style::fontSizeCaption * contentScale,
+          .fontWeight = FontWeight::Medium,
+          .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+      })
+  ));
+  instance.notchNotificationApp = static_cast<Label*>(instance.notchNotificationCard->addChild(
+      ui::label({
+          .text = "",
+          .fontSize = Style::fontSizeBody * contentScale,
+          .fontWeight = FontWeight::Medium,
+          .color = colorSpecFromRole(ColorRole::OnSurface),
+          .ellipsize = TextEllipsize::End,
+      })
+  ));
+  instance.notchNotificationBody = static_cast<Label*>(instance.notchNotificationCard->addChild(
+      ui::label({
+          .text = "No notifications",
+          .fontSize = Style::fontSizeCaption * contentScale,
+          .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+          .maxLines = 2,
+          .ellipsize = TextEllipsize::End,
+      })
+  ));
+  instance.notchNotificationTime = static_cast<Label*>(instance.notchNotificationCard->addChild(
+      ui::label({
+          .text = "",
+          .fontSize = Style::fontSizeMini * contentScale,
+          .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+          .textAlign = TextAlign::End,
+      })
+  ));
+  instance.notchNotificationClearButton = static_cast<Button*>(instance.notchNotificationCard->addChild(
+      ui::button({
+          .text = "Clear",
+          .fontSize = Style::fontSizeCaption * contentScale,
+          .controlHeight = 28.0F * contentScale,
+          .variant = ButtonVariant::Ghost,
+          .radius = 8.0F * contentScale,
+          .onClick = [&instance]() { if (instance.m_notifications) instance.m_notifications->clearHistory(); },
+      })
+  ));
+
   // ---- Column 4 (20%): 2x2 Quick Toggle Tiles (Wi-Fi, Bluetooth, DND, Caffeine) ----
   instance.notchToggleGrid = static_cast<GridView*>(mainContent->addChild(
       std::make_unique<GridView>()
@@ -5281,6 +5339,46 @@ void Bar::prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool /*need
       instance.notchPinButton->setVariant(instance.notchPinned ? ButtonVariant::Primary : ButtonVariant::Ghost);
     }
 
+    // Update notification card (Column 4)
+    if (instance.notchNotificationCard != nullptr && instance.m_notifications != nullptr) {
+      const auto& history = instance.m_notifications->history();
+      if (!history.empty()) {
+        // Get the most recent notification
+        const auto& latest = history.front();
+        const auto& notif = latest.notification;
+        if (instance.notchNotificationApp != nullptr && !notif.appName.empty()) {
+          instance.notchNotificationApp->setText(notif.appName);
+        }
+        if (instance.notchNotificationBody != nullptr && !notif.body.empty()) {
+          instance.notchNotificationBody->setText(notif.body);
+        } else if (instance.notchNotificationBody != nullptr && !notif.summary.empty()) {
+          instance.notchNotificationBody->setText(notif.summary);
+        }
+        // Format timestamp
+        if (instance.notchNotificationTime != nullptr) {
+          auto now = std::chrono::steady_clock::now();
+          // receivedTime is TimePoint (chrono::steady_clock::time_point)
+          auto notifTime = notif.receivedTime;
+          auto diff = std::chrono::duration_cast<std::chrono::minutes>(now - notifTime).count();
+          char timeBuf[32];
+          if (diff < 1) {
+            std::snprintf(timeBuf, sizeof(timeBuf), "Just now");
+          } else if (diff < 60) {
+            std::snprintf(timeBuf, sizeof(timeBuf), "%ld min ago", diff);
+          } else if (diff < 1440) {
+            std::snprintf(timeBuf, sizeof(timeBuf), "%ld hr ago", diff / 60);
+          } else {
+            std::snprintf(timeBuf, sizeof(timeBuf), "%ld days ago", diff / 1440);
+          }
+          instance.notchNotificationTime->setText(timeBuf);
+        }
+      } else {
+        if (instance.notchNotificationApp != nullptr) instance.notchNotificationApp->setText("");
+        if (instance.notchNotificationBody != nullptr) instance.notchNotificationBody->setText("No notifications");
+        if (instance.notchNotificationTime != nullptr) instance.notchNotificationTime->setText("");
+      }
+    }
+
     // Update clock/date in Bento clock card (Column 1)
     if (instance.notchTimeLabel != nullptr || instance.notchDateLabel != nullptr) {
       if (instance.notchTimeLabel != nullptr) instance.notchTimeLabel->setText(timeBuf);
@@ -5952,13 +6050,13 @@ void Bar::animateNotchExpand(BarInstance& instance, bool expand) {
         }
 // Update input region every frame to match exact pill rect
         if (instance.surface != nullptr) {
-          const NotchDimensions dims = computeNotchDimensions(instance, progress);
-          const float notchW = lerp(dims.collapsedWidth, dims.expandedWidth, progress);
-          const float notchH = lerp(dims.collapsedHeight, dims.expandedHeight, progress);
-          const float maxW = std::min(notchW, static_cast<float>(instance.outputLogicalWidth - 32));
-          const float maxH = std::min(notchH, static_cast<float>(instance.outputLogicalHeight) * 0.45F);
-          const float pillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
-          const float pillY = static_cast<float>(instance.barConfig.notchTopMargin);
+          // const NotchDimensions dims = computeNotchDimensions(instance, progress);
+          // const float notchW = lerp(dims.collapsedWidth, dims.expandedWidth, progress);
+          // const float notchH = lerp(dims.collapsedHeight, dims.expandedHeight, progress);
+          // const float maxW = std::min(notchW, static_cast<float>(instance.outputLogicalWidth - 32));
+          // const float maxH = std::min(notchH, static_cast<float>(instance.outputLogicalHeight) * 0.45F);
+          // const float pillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
+          // const float pillY = static_cast<float>(instance.barConfig.notchTopMargin);
         }
       },
       [this, &instance, expand]() {

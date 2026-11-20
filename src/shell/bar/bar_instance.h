@@ -223,6 +223,12 @@ struct BarInstance {
   Flex* notchVolumeCard = nullptr;
   Flex* notchMicCard = nullptr;
   Flex* notchBrightnessCard = nullptr;
+  Flex* notchNotificationCard = nullptr;
+  Label* notchNotificationTitle = nullptr;
+  Label* notchNotificationBody = nullptr;
+  Label* notchNotificationApp = nullptr;
+  Label* notchNotificationTime = nullptr;
+  Button* notchNotificationClearButton = nullptr;
   Slider* notchVolumeSlider = nullptr;
   Label* notchVolumeLabel = nullptr;
   Label* notchVolumeSinkLabel = nullptr;
