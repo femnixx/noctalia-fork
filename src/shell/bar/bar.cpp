@@ -6208,6 +6208,11 @@ namespace {
 void Bar::animateNotchExpand(BarInstance& instance, bool expand) {
   if (!instance.isNotchMode) return;
 
+  // Close any open dropdown before starting collapse animation to prevent orphaned popups
+  if (!expand && instance.selectDropdownPopup) {
+    instance.selectDropdownPopup->closeSelectDropdown();
+  }
+
   const float from = instance.notchExpandProgress;
   const float to = expand ? 1.0F : 0.0F;
   if (std::abs(from - to) < 0.01F) return;

@@ -1,68 +1,107 @@
-# Dynamic Notch Dropdown Fixes - Plan
+# Dynamic Notch Dropdown Fix Plan - v2
 
-## Issues to Fix
+## Issues
+1. **Dropdown box persists after notch collapse** - When dynamic notch animates to collapsed state, the dropdown popup remains visible (orphaned)
+2. **Dropdown doesn't dismiss on outside click** - Clicking outside dropdown area doesn't close it; only ESC or re-clicking trigger works
+3. **Dropdown items not clickable** - Selection doesn't work
 
-### 1. Trigger Shows Text Instead of Icon Only
-**Current behavior**: Select trigger displays selected device name (e.g., "Built-in Audio") even when `triggerGlyph` is set.
-**Desired behavior**: Trigger shows ONLY the icon (speaker/mic glyph), dropdown shows device names with checkmarks.
+## Root Cause Analysis
 
-**Root cause**: `Select::syncTriggerText()` (line 410-416) always sets trigger label text to `selectedText()` or `placeholder`. It doesn't respect `m_triggerGlyph` for display-only mode.
+### Issue 1: Orphaned Dropdown on Notch Collapse
+The dropdown (`SelectDropdownPopup` → `ContextMenuPopup`) is a Wayland popup surface parented to the notch's layer surface. When `animateNotchExpand(instance, false)` runs:
+- The notch surface shrinks via animation
+- The dropdown popup is NOT closed - it stays attached to the now-smaller parent
+- Result: dropdown box floats in wrong position, detached from trigger
 
-### 2. Dropdown Doesn't Close on Outside Click
-**Current behavior**: Dropdown only closes via Escape key or clicking the dropdown button again. Clicking outside does nothing.
-**Desired behavior**: Clicking anywhere outside the dropdown area should dismiss it.
+**Fix needed**: Close dropdown when notch collapse animation starts.
 
-**Root cause**: Wayland `xdg_popup` with `grab=true` should auto-dismiss on outside click, but this may not be working due to:
-- Parent surface configuration issues
-- The `pointerParentSurface` not being set correctly for the grab
-- The popup not receiving dismiss events from compositor
+### Issue 2: No Dismiss on Outside Click
+The `ContextMenuPopup` opens with `grab=true` (line 101), which should auto-dismiss on outside click via compositor. However:
+- Layer shell surfaces with `Overlay` layer may not properly support `grab` popups
+- The `inputSerial` is passed but may not be valid for the grab
+- The `pointerParentSurface` is set to the notch's `wlSurface`, but the grab may require the layer surface
 
-### 3. Dropdown Selection Might Not Work Properly
-Need to verify the selection callback properly updates the default device and UI state.
+**Fix needed**: 
+1. Ensure proper parent surface for grab (layer surface, not wl surface)
+2. Handle dismiss manually if compositor doesn't auto-dismiss
+
+### Issue 3: Dropdown Items Not Clickable
+Could be related to:
+- Grab capturing all pointer events
+- Input dispatcher not properly routing to menu items
+- The dropdown being parented to a surface that's being resized
 
 ## Implementation Plan
 
-### Task 1: Fix Trigger Display - Icon Only Mode
-**File**: `lib/ui/controls/select.cpp`
-- Modify `syncTriggerText()` to show empty text when `m_triggerGlyph` is set (or add a flag for "icon-only" mode)
-- Alternative: Add a `setShowSelectedText(bool)` method to control this behavior
+### Task 1: Close Dropdown on Notch Collapse Start
+**File**: `src/shell/bar/bar.cpp` - `animateNotchExpand()`
+- At start of collapse animation (`expand == false`), close any open dropdown
+- Access via `instance.selectDropdownPopup` if available
 
-### Task 2: Fix Dropdown Dismiss on Outside Click
-**Files**: 
-- `lib/ui/controls/context_menu_popup.cpp` - Verify grab configuration
-- `lib/ui/controls/select_dropdown_popup.cpp` - Ensure proper parent surface setup
+```cpp
+void Bar::animateNotchExpand(BarInstance& instance, bool expand) {
+  if (!expand && instance.selectDropdownPopup) {
+    instance.selectDropdownPopup->closeSelectDropdown();
+  }
+  // ... rest of function
+}
+```
 
-The key is ensuring the Wayland compositor properly manages the popup grab. The `ContextMenuPopup::open()` sets:
-- `grab = true` (line 101) - should auto-dismiss on outside click
-- `pointerParentSurface = request.pointerParentSurface` (line 217) - for pointer capture translation
+### Task 2: Fix Parent Surface for Grab
+**File**: `src/shell/bar/bar.cpp` - `initNotchScene()`
+- Pass `layerSurface()` instead of `wlSurface()` for the popup parent
+- The grab needs the xdg surface (layer surface) not the raw wl surface
 
-Check if the parent surface is correctly set in `SelectDropdownPopup::openSelectDropdown()` (line 102-108 in select_dropdown_popup.cpp).
+```cpp
+instance.selectDropdownPopup->setParent(
+    LayerShell::popupAttach(instance.surface->layerSurface()),
+    instance.surface->wlSurface(),  // keep for pointer capture translation
+    instance.output
+);
+```
+Wait - the current code already passes both. Let me check `ContextMenuPopup::open()`:
+- `parent.xdgSurface` = layer surface (for grab)
+- `pointerParentSurface` = wl surface (for pointer capture translation)
 
-### Task 3: Verify Selection Works
-**File**: `src/shell/bar/bar.cpp` - Verify the `onSelectionChanged` callback properly:
-1. Updates PipeWire default sink/source
-2. Triggers UI refresh via `requestLayout()`/`requestRedraw()`
-3. Updates the Select's selected index visually
+This looks correct. The issue may be that the layer surface is not configured yet or the grab serial is wrong.
+
+### Task 3: Manual Dismiss on Outside Click
+**File**: `lib/ui/controls/context_menu_popup.cpp` - `onPointerEvent()`
+- When `Button` event on parent surface (not popup) and not captured → close popup
+- Currently line 340-352 only handles this when `captured` is true
+
+Add explicit handling:
+```cpp
+case PointerEvent::Type::Button:
+  if (!onPopup && !captured && event.pressed) {
+    // Click outside popup - dismiss
+    deferClose();
+    return true;
+  }
+  // ... existing handling
+```
+
+### Task 4: Fix Dropdown Items Clickable
+The items should be clickable via `ContextMenuControl`. The `onActivate` callback is set in `SelectDropdownPopup::openSelectDropdown()` (line 70-74). This should work unless the grab interferes.
+
+May need to ensure the popup's input dispatcher properly routes events to the menu control.
 
 ## Validation Steps
-
-1. **Build and run**: `ninja -C build -j4 && ./build/noctalia`
-2. **Test trigger display**: Open notch → verify speaker/mic icons show WITHOUT text
-3. **Test dropdown open**: Click speaker icon → dropdown opens with device list
-4. **Test selection**: Click different device → default changes, checkmark moves
-5. **Test dismiss**: Click outside dropdown → dropdown closes
-6. **Test Escape**: Press Escape → dropdown closes
-7. **Test mic dropdown**: Same tests for microphone
-8. **Check logs**: No "no parent surface set" warnings
+1. Build: `ninja -C build -j4`
+2. Run: `./build/noctalia`
+3. Open notch (hover top center)
+4. Click speaker icon → dropdown opens
+5. Click dropdown item → selection changes, dropdown closes
+6. Click outside dropdown → dropdown closes
+7. Wait for auto-collapse (or move mouse away) → notch collapses, NO orphaned dropdown
+8. Repeat for mic dropdown
 
 ## Risk Mitigation
-
-- **Minimal changes**: Only modify `syncTriggerText()` and verify popup parent setup
-- **Preserve existing behavior**: Other Select uses (if any) should not be affected
-- **Test both dropdowns**: Volume (output) and Mic (input) device pickers
+- Close dropdown in `animateNotchExpand` BEFORE animation starts
+- Test both expand and collapse animations
+- Verify keyboard navigation (ESC) still works
+- Check other Select uses aren't affected
 
 ## Out of Scope
-
 - Full context menu redesign
-- Keyboard navigation improvements
-- Search/filter in dropdown
+- Animating dropdown with notch (complex, low priority)

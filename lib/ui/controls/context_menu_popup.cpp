@@ -350,6 +350,11 @@ bool ContextMenuPopup::onPointerEvent(const PointerEvent& event) {
       }
       return true;
     }
+    // Click outside popup without capture -> dismiss
+    if (event.pressed && !onPopup && !captured) {
+      deferClose();
+      return true;
+    }
     break;
   case PointerEvent::Type::Axis:
     if (onPopup || m_pointerInside) {
