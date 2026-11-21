@@ -77,6 +77,7 @@ Select::Select() {
     if (!m_enabled || data.button != BTN_LEFT) {
       return;
     }
+    m_lastClickSerial = data.serial;
     toggleOpen();
   });
   triggerArea->setOnFocusGain([this] {
@@ -211,6 +212,12 @@ void Select::setTriggerGlyph(std::string_view glyph) {
     m_triggerGlyph->setGlyph(glyph);
     markPaintDirty();
   }
+}
+
+void Select::setShowSelectedText(bool show) {
+  m_showSelectedText = show;
+  syncTriggerText();
+  markLayoutDirty();
 }
 
 void Select::setOptionIndicators(std::vector<ColorSpec> colors) {
@@ -411,7 +418,11 @@ void Select::syncTriggerText() {
   if (m_triggerLabel == nullptr) {
     return;
   }
-  m_triggerLabel->setText(selectedText().empty() ? m_placeholder : std::string(selectedText()));
+  if (m_showSelectedText) {
+    m_triggerLabel->setText(selectedText().empty() ? m_placeholder : std::string(selectedText()));
+  } else {
+    m_triggerLabel->setText("");
+  }
   m_triggerLabel->setFontSize(m_fontSize);
 }
 
@@ -471,6 +482,7 @@ void Select::openPopupDropdown() {
       .optionSwatchPreviews = m_optionSwatchPreviews,
       .selectedIndex = m_selectedIndex,
       .maxVisibleOptions = static_cast<std::size_t>(kMaxVisibleOptions),
+      .inputSerial = m_lastClickSerial,
   };
 
   SelectPopupContext::DropdownCallbacks callbacks{

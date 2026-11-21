@@ -38,9 +38,10 @@ public:
   void setTriggerGlyph(std::string_view glyph);
   void setOptionIndicators(std::vector<ColorSpec> colors);
   void setColorSwatchPreviews(std::vector<ColorSwatchPreview> previews);
-  void setNotifyOnReselect(bool enabled);
-  void setOnSelectionChanged(std::function<void(std::size_t, std::string_view)> callback);
+void setNotifyOnReselect(bool enabled);
+  void setShowSelectedText(bool show);
 
+  void setOnSelectionChanged(std::function<void(std::size_t, std::string_view)> callback);
   std::size_t selectedIndex() const noexcept { return m_selectedIndex; }
   std::string_view selectedText() const noexcept;
   bool enabled() const noexcept { return m_enabled; }
@@ -84,6 +85,8 @@ private:
   std::vector<ColorSpec> m_indicatorColors;
   std::vector<ColorSwatchPreview> m_optionSwatchPreviews;
   bool m_notifyOnReselect = false;
+  bool m_showSelectedText = true;
+  std::uint32_t m_lastClickSerial = 0;
   Signal<>::ScopedConnection m_paletteConn;
   Signal<>::ScopedConnection m_inputBordersConn;
 

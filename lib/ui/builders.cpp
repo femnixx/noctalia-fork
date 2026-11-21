@@ -567,6 +567,9 @@ namespace ui {
     if (props.triggerGlyph.has_value()) {
       control->setTriggerGlyph(*props.triggerGlyph);
     }
+    if (props.showSelectedText.has_value()) {
+      control->setShowSelectedText(*props.showSelectedText);
+    }
     if (props.optionIndicators.has_value()) {
       control->setOptionIndicators(std::move(*props.optionIndicators));
     }

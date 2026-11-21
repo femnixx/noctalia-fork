@@ -28,6 +28,7 @@ public:
     std::vector<ColorSwatchPreview> optionSwatchPreviews;
     std::size_t selectedIndex = static_cast<std::size_t>(-1);
     std::size_t maxVisibleOptions = 6;
+    std::optional<std::uint32_t> inputSerial = std::nullopt;
   };
 
   struct DropdownCallbacks {

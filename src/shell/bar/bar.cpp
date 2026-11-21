@@ -4073,6 +4073,7 @@ auto mainContent = instance.notchBentoRoot->addChild(
           .placeholder = "",
           .controlHeight = 28.0F * contentScale,
           .triggerGlyph = "volume-high",
+          .showSelectedText = false,
           .flexGrow = 1.0F,
           .onSelectionChanged = [&instance](std::size_t index, std::string_view label) {
               (void)label;
@@ -4231,6 +4232,7 @@ auto mainContent = instance.notchBentoRoot->addChild(
           .placeholder = "",
           .controlHeight = 28.0F * contentScale,
           .triggerGlyph = "microphone",
+          .showSelectedText = false,
           .flexGrow = 1.0F,
           .onSelectionChanged = [&instance](std::size_t index, std::string_view label) {
               (void)label;
