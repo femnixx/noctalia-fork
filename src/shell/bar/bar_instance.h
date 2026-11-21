@@ -165,7 +165,6 @@ struct BarInstance {
   Flex* notchExpandedStartSection = nullptr;
   Flex* notchExpandedCenterSection = nullptr;
   Flex* notchExpandedEndSection = nullptr;
-  InputArea* notchHoverArea = nullptr;        // Hover detection area covering current pill bounds
   bool notchPointerInside = false;            // Track pointer inside notch area
   bool notchFullscreenSuppressed = false;     // Suppress expand when fullscreen focused
   bool notchSliderActive = false;             // True while any slider is being dragged

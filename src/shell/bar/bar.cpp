@@ -761,8 +761,8 @@ namespace {
     spec.surfaceWidth = static_cast<std::uint32_t>(expandedW + static_cast<float>(sb.left) + static_cast<float>(sb.right));
     spec.surfaceHeight = static_cast<std::uint32_t>(expandedH + static_cast<float>(sb.up) + static_cast<float>(sb.down) + static_cast<float>(barConfig.notchTopMargin));
 
-    // Exclusive zone = collapsed notch height so the surface receives pointer events
-    // (required for hover expand on Top layer). Visual floating is achieved via notchTopMargin.
+    // Exclusive zone = collapsed notch height so the Overlay surface receives pointer events.
+    // Visual floating is achieved via notchTopMargin.
     spec.exclusiveZone = static_cast<std::uint32_t>(barConfig.thickness);
 
     return spec;
@@ -2582,13 +2582,13 @@ void Bar::createInstance(const WaylandOutput& output, std::size_t barIndex, cons
       barConfig.reserveSpace, surfaceSpec.exclusiveZone, isNotchMode
   );
 
-  auto surfaceConfig = LayerSurfaceConfig{
+auto surfaceConfig = LayerSurfaceConfig{
       .nameSpace = "noctalia-bar-" + barConfig.name,
       .layer = isNotchMode ? LayerShellLayer::Overlay : layerShellLayerFromConfig(barConfig.layer),
       .anchor = anchor,
       .width = surfaceSpec.surfaceWidth,
       .height = surfaceSpec.surfaceHeight,
-      .exclusiveZone = surfaceSpec.exclusiveZone,
+      .exclusiveZone = isNotchMode ? static_cast<std::uint32_t>(barConfig.thickness) : surfaceSpec.exclusiveZone,
       .marginTop = surfaceSpec.marginTop,
       .marginRight = surfaceSpec.marginRight,
       .marginBottom = surfaceSpec.marginBottom,
@@ -2635,12 +2635,10 @@ void Bar::createInstance(const WaylandOutput& output, std::size_t barIndex, cons
     kLog.warn("failed to initialize surface for output {}", output.name);
     return;
   }
-
-  // Enable click-through with full surface input region so the entire surface
-  // receives pointer events. The Wayland Enter/Leave handlers drive expand/collapse.
+  // For notch mode: Overlay layer. clickThrough stays false (default) so surface receives events.
+  // Input region tracks the animated pill bounds every frame.
   if (isNotchMode) {
-    inst->surface->setClickThrough(true);
-    inst->surface->setInputRegion({InputRect{0, 0, static_cast<int>(surfaceSpec.surfaceWidth), static_cast<int>(surfaceSpec.surfaceHeight)}});
+    // Input region will be set in initNotchScene after first frame
   }
 
   m_surfaceMap[instance->surface->wlSurface()] = instance.get();
@@ -4546,78 +4544,65 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
     instance.shadowRight = static_cast<Box*>(instance.shadowRightClip->addChild(ui::box()));
 }
   // Content clip — clips to pill bounds, positioned dynamically each frame.
-  // This is a regular Node (not InputArea) for visual clipping only. It stays
-  // hit-test visible (default) so the child widgets (toggles, buttons, sliders)
-  // inside it receive pointer input.
-  auto contentClip = ui::node({});
-  contentClip->setClipChildren(true);
-
-  // Hover detection area — an InputArea covering the COLLAPSED pill for hover-driven
-  // expand/collapse. It is intentionally hit-test visible and accepts no
-  // buttons, so pointer clicks pass straight through to the child widgets inside
-  // contentClip instead of being swallowed here.
-  const float collapsedW = static_cast<float>(cfg.notchCollapsedWidth);
-  const float collapsedH = static_cast<float>(cfg.notchCollapsedHeight);
-  auto hoverArea = static_cast<InputArea*>(instance.slideRoot->addChild(
-      ui::inputArea({
-          .acceptedButtons = 0,
-          .propagateEvents = true,
-          .clipChildren = false,
-          .hitTestVisible = true,
-      })
-  ));
-  instance.notchHoverArea = static_cast<InputArea*>(hoverArea);
-  instance.notchHoverArea->setPosition(pillX, pillY);
-  instance.notchHoverArea->setSize(collapsedW, collapsedH);
-  instance.notchHoverArea->setHitTestVisible(true);
-  instance.notchHoverArea->setPropagateEvents(true);
-  instance.notchHoverArea->setAcceptedButtons(0);
-  instance.notchHoverArea->setZIndex(10);  // Above contentClip (painting order only)
-
-  // Content clip positioned at the same pill bounds, below the hover area.
-  instance.contentClip = instance.slideRoot->addChild(std::move(contentClip));
+  // Also serves as hover detection area for expand/collapse.
+  // This is an InputArea so it receives pointer enter/leave/motion events.
+  auto contentClip = ui::inputArea({
+      .acceptedButtons = 0,
+      .propagateEvents = true,
+      .clipChildren = true,
+      .hitTestVisible = true,
+  });
+  instance.contentClip = static_cast<InputArea*>(instance.slideRoot->addChild(std::move(contentClip)));
   instance.contentClip->setPosition(pillX, pillY);
   instance.contentClip->setSize(maxW, maxH);
-  instance.contentClip->setZIndex(5);  // Below hoverArea
+  instance.contentClip->setZIndex(10);
 
-  // Track pointer position within the hover area to prevent false leave events
-  // when moving between notchHoverArea and child widgets inside contentClip.
-  instance.notchHoverArea->setOnMotion([inst = &instance](const InputArea::PointerData& data) {
+  // Set initial input region to COLLAPSED pill bounds so clicks reach buttons/sliders
+  // when collapsed, and pass through to windows below outside the pill.
+  if (instance.surface != nullptr) {
+    const float collapsedW = static_cast<float>(cfg.notchCollapsedWidth);
+    const float collapsedH = static_cast<float>(cfg.notchCollapsedHeight);
+    const InputRect rect{
+        static_cast<int>(std::lround(pillX)),
+        static_cast<int>(std::lround(pillY)),
+        static_cast<int>(std::lround(collapsedW)),
+        static_cast<int>(std::lround(collapsedH))
+    };
+    instance.surface->setInputRegion({rect});
+  }
+
+  // Track pointer position within the content clip to prevent false leave events
+  // when moving between contentClip and child widgets inside it.
+  auto* clipArea = static_cast<InputArea*>(instance.contentClip);
+  clipArea->setOnMotion([inst = &instance](const InputArea::PointerData& data) {
     inst->lastPointerSx = data.localX;
     inst->lastPointerSy = data.localY;
     inst->notchPointerInside = true;
     inst->notchCollapseTimer.stop();
   });
-instance.notchHoverArea->setOnEnter([this, inst = &instance](const InputArea::PointerData& data) {
+  clipArea->setOnEnter([this, inst = &instance](const InputArea::PointerData& data) {
     inst->notchPointerInside = true;
     inst->notchCollapseTimer.stop();
     if (inst->barConfig.notchHoverExpand && !isFullscreenFocused(inst->output)) {
       animateNotchExpand(*inst, true);
     }
   });
-instance.notchHoverArea->setOnLeave([this, inst = &instance]() {
+  clipArea->setOnLeave([this, inst = &instance]() {
     inst->notchPointerInside = false;
-    // 180ms grace timer before collapsing — prevents flicker on accidental cursor slip
     if (inst->barConfig.notchCollapseDelayMs > 0) {
       inst->notchCollapseTimer.start(
           std::chrono::milliseconds(inst->barConfig.notchCollapseDelayMs),
           [this, inst]() {
-            // notchPointerInside is set to true by onEnter/onMotion if pointer re-enters
             if (!inst->notchPinned && !inst->notchPointerInside && inst->isNotchMode && inst->notchExpanded &&
                 !inst->notchSliderActive) {
               animateNotchExpand(*inst, false);
             }
           }
-        );
+      );
     } else {
       if (!inst->notchPinned && !inst->notchSliderActive) {
         animateNotchExpand(*inst, false);
       }
-    }
-  });
-  instance.notchHoverArea->setOnClick([this, inst = &instance](const InputArea::PointerData&) {
-    if (inst->barConfig.notchClickExpand) {
-      animateNotchExpand(*inst, !inst->notchExpanded);
     }
   });
 
@@ -4695,9 +4680,6 @@ instance.notchHoverArea->setOnLeave([this, inst = &instance]() {
     instance.bg->setPosition(pillX, pillY);
     instance.bg->setSize(maxW, maxH);
   }
-if (instance.contentClip != nullptr) {
-      // Position/size already set when adding as child of notchHoverArea
-    }
 
   // Wire up InputDispatcher for this instance
   instance.inputDispatcher.setSceneRoot(instance.sceneRoot.get());
@@ -4794,18 +4776,14 @@ void Bar::updateNotchGeometry(BarInstance& instance, std::uint32_t width, std::u
   const float pillX = (static_cast<float>(instance.maxSurfaceW) - notchW) * 0.5F;
   const float pillY = static_cast<float>(cfg.notchTopMargin);
 
-  // Update hover area to cover the full pill bounds (matches contentClip).
-  // The leave event will fire when pointer leaves the pill area.
-  if (instance.notchHoverArea != nullptr) {
-    instance.notchHoverArea->setPosition(pillX, pillY);
-    instance.notchHoverArea->setSize(notchW, notchH);
-  }
-
-  // Update content clip to pill bounds (sibling of notchHoverArea).
+  // Update content clip to pill bounds.
   if (instance.contentClip != nullptr) {
     instance.contentClip->setPosition(pillX, pillY);
     instance.contentClip->setSize(notchW, notchH);
   }
+
+  // Update Wayland input region to match current pill bounds (tracks animation).
+  updateNotchInputRegion(instance, pillX, pillY, notchW, notchH);
 
   // Layout widgets with cross-fade opacity inside pill bounds.
   const float widgetPillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
@@ -5712,11 +5690,11 @@ bool Bar::onPointerEvent(const PointerEvent& event) {
     }
     // Notch-specific: drive expand on pointer enter for Dynamic Notch mode.
     // Only expand if pointer is over the pill area (not the entire surface).
+    const NotchDimensions dims = computeNotchDimensions(*entered, entered->notchExpandProgress);
     // Use a small delay to prevent accidental expansion on quick passes.
     if (entered->isNotchMode && entered->barConfig.notchHoverExpand && !isFullscreenFocused(entered->output)) {
       const float sx = static_cast<float>(event.sx);
       const float sy = static_cast<float>(event.sy);
-      const NotchDimensions dims = computeNotchDimensions(*entered, entered->notchExpandProgress);
       const float pillX = (static_cast<float>(entered->maxSurfaceW) - dims.collapsedWidth) * 0.5F;
       const float pillY = static_cast<float>(entered->barConfig.notchTopMargin);
       const float pillW = dims.collapsedWidth;
@@ -5814,9 +5792,11 @@ m_hoveredInstance = nullptr;
     const auto sx = static_cast<float>(event.sx);
     const auto sy = static_cast<float>(event.sy);
     bool pressed = event.pressed;
+
     bool consumed = m_hoveredInstance->inputDispatcher.pointerButton(
         sx, sy, event.button, pressed, event.serial, event.time, event.touch
     );
+
     if (pressed
         && !consumed
         && handleBarDeadZoneButton(*m_hoveredInstance, sx, sy, event.button, m_platform, m_actionDispatcher)) {
@@ -6038,7 +6018,7 @@ void Bar::animateNotchExpand(BarInstance& instance, bool expand) {
   const float durationMs = expand ? 210.0F : 170.0F;
   const Easing easing = expand ? Easing::EaseOutCubic : Easing::EaseInQuad;
 
-  instance.notchAnimationId = instance.animations.animate(
+instance.notchAnimationId = instance.animations.animate(
       from, to, durationMs, easing,
       [this, &instance](float progress) {
         instance.notchExpandProgress = progress;
@@ -6048,15 +6028,16 @@ void Bar::animateNotchExpand(BarInstance& instance, bool expand) {
           // Keep frame callbacks alive for the entire animation duration
           instance.surface->requestFrameTick();
         }
-// Update input region every frame to match exact pill rect
+        // Update input region every frame to match exact pill rect
         if (instance.surface != nullptr) {
-          // const NotchDimensions dims = computeNotchDimensions(instance, progress);
-          // const float notchW = lerp(dims.collapsedWidth, dims.expandedWidth, progress);
-          // const float notchH = lerp(dims.collapsedHeight, dims.expandedHeight, progress);
-          // const float maxW = std::min(notchW, static_cast<float>(instance.outputLogicalWidth - 32));
-          // const float maxH = std::min(notchH, static_cast<float>(instance.outputLogicalHeight) * 0.45F);
-          // const float pillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
-          // const float pillY = static_cast<float>(instance.barConfig.notchTopMargin);
+          const NotchDimensions dims = computeNotchDimensions(instance, progress);
+          const float notchW = lerp(dims.collapsedWidth, dims.expandedWidth, progress);
+          const float notchH = lerp(dims.collapsedHeight, dims.expandedHeight, progress);
+          const float maxW = std::min(notchW, static_cast<float>(instance.outputLogicalWidth - 32));
+          const float maxH = std::min(notchH, static_cast<float>(instance.outputLogicalHeight) * 0.45F);
+          const float pillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
+          const float pillY = static_cast<float>(instance.barConfig.notchTopMargin);
+          updateNotchInputRegion(instance, pillX, pillY, maxW, maxH);
         }
       },
       [this, &instance, expand]() {
@@ -6064,13 +6045,14 @@ void Bar::animateNotchExpand(BarInstance& instance, bool expand) {
         instance.notchExpanded = expand;
         // Final input region update
         if (instance.surface != nullptr) {
-          // const NotchDimensions dims = computeNotchDimensions(instance, expand ? 1.0F : 0.0F);
-          // const float notchW = expand ? dims.expandedWidth : dims.collapsedWidth;
-          // const float notchH = expand ? dims.expandedHeight : dims.collapsedHeight;
-          // const float maxW = std::min(notchW, static_cast<float>(instance.outputLogicalWidth - 32));
-          // const float maxH = std::min(notchH, static_cast<float>(instance.outputLogicalHeight) * 0.45F);
-          // const float pillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
-          // const float pillY = static_cast<float>(instance.barConfig.notchTopMargin);
+          const NotchDimensions dims = computeNotchDimensions(instance, expand ? 1.0F : 0.0F);
+          const float notchW = expand ? dims.expandedWidth : dims.collapsedWidth;
+          const float notchH = expand ? dims.expandedHeight : dims.collapsedHeight;
+          const float maxW = std::min(notchW, static_cast<float>(instance.outputLogicalWidth - 32));
+          const float maxH = std::min(notchH, static_cast<float>(instance.outputLogicalHeight) * 0.45F);
+          const float pillX = (static_cast<float>(instance.maxSurfaceW) - maxW) * 0.5F;
+          const float pillY = static_cast<float>(instance.barConfig.notchTopMargin);
+          updateNotchInputRegion(instance, pillX, pillY, maxW, maxH);
         }
         // Start auto-collapse timer if expanded and not hovered and not pinned
         if (expand && !instance.notchPinned && !instance.notchPointerInside && instance.barConfig.notchAutoCollapseTimeoutMs > 0) {
