@@ -4096,7 +4096,8 @@ instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild
             }
             if (instance.m_audio) instance.m_audio->setSinkVolume(instance.m_audio->state().defaultSinkId, static_cast<float>(v) / 100.0F);
           },
-          .onDragEnd = [&instance]() { /* Drag end handled by polling dragging() */ },
+          .onDragEnd = [&instance]() { instance.notchSliderActive = false; },
+          .onDragStart = [&instance]() { instance.notchSliderActive = true; },
       })
   ));
 
@@ -4213,7 +4214,8 @@ instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild
             }
             if (instance.m_audio) instance.m_audio->setSourceVolume(instance.m_audio->state().defaultSourceId, static_cast<float>(v) / 100.0F);
           },
-          .onDragEnd = [&instance]() { /* Drag end handled by polling dragging() */ },
+          .onDragEnd = [&instance]() { instance.notchSliderActive = false; },
+          .onDragStart = [&instance]() { instance.notchSliderActive = true; },
       })
   ));
 
@@ -4273,7 +4275,8 @@ instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild
             }
             if (instance.m_brightness) instance.m_brightness->setBrightness(instance.m_brightness->displays()[0].id, static_cast<float>(v) / 100.0F);
           },
-          .onDragEnd = [&instance]() { /* Drag end handled by polling dragging() */ },
+          .onDragEnd = [&instance]() { instance.notchSliderActive = false; },
+          .onDragStart = [&instance]() { instance.notchSliderActive = true; },
       })
   ));
 
@@ -4588,7 +4591,18 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
     }
   });
   clipArea->setOnLeave([this, inst = &instance]() {
+    // Check if pointer is still within contentClip bounds (moved to child widget, not truly left)
+    if (inst->lastPointerSx >= 0.0F && inst->lastPointerSx < inst->contentClip->width() &&
+        inst->lastPointerSy >= 0.0F && inst->lastPointerSy < inst->contentClip->height()) {
+      // Pointer is over a child widget - don't collapse
+      return;
+    }
     inst->notchPointerInside = false;
+    // Don't collapse if interacting with child widget (button/slider/submenu)
+    bool overChildWidget = inst->notchSubMenuOpen || inst->notchSliderActive;
+    if (overChildWidget) {
+      return;
+    }
     if (inst->barConfig.notchCollapseDelayMs > 0) {
       inst->notchCollapseTimer.start(
           std::chrono::milliseconds(inst->barConfig.notchCollapseDelayMs),
