@@ -331,6 +331,7 @@ namespace ui {
     std::optional<bool> participatesInLayout = std::nullopt;
     std::function<void(double)> onValueChanged = nullptr;
     std::function<void()> onDragEnd = nullptr;
+    std::function<void()> onDragStart = nullptr;
     std::function<void(Slider&)> configure = nullptr;
   };
 

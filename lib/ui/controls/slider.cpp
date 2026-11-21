@@ -68,9 +68,13 @@ Slider::Slider() {
       }
       return;
     }
+    // Drag started
     applyVisualState();
     updateFromLocalX(data.localX);
     markPaintDirty();
+    if (m_onDragStart) {
+      m_onDragStart();
+    }
   });
   area->setOnMotion([this](const InputArea::PointerData& data) {
     if (!m_enabled || m_inputArea == nullptr || !m_inputArea->pressed()) {
@@ -239,6 +243,8 @@ void Slider::setWheelAdjustEnabled(bool enabled) { m_wheelAdjustEnabled = enable
 void Slider::setOnValueChanged(std::function<void(double)> callback) { m_onValueChanged = std::move(callback); }
 
 void Slider::setOnDragEnd(std::function<void()> callback) { m_onDragEnd = std::move(callback); }
+
+void Slider::setOnDragStart(std::function<void()> callback) { m_onDragStart = std::move(callback); }
 
 bool Slider::dragging() const noexcept { return m_inputArea != nullptr && m_inputArea->pressed(); }
 

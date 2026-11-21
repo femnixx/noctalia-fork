@@ -22,6 +22,7 @@ public:
   void setWheelAdjustEnabled(bool enabled);
   void setOnValueChanged(std::function<void(double)> callback);
   void setOnDragEnd(std::function<void()> callback);
+  void setOnDragStart(std::function<void()> callback);
 
   double value() const noexcept { return m_value; }
   double minValue() const noexcept { return m_min; }
@@ -46,6 +47,7 @@ private:
 
   std::function<void(double)> m_onValueChanged;
   std::function<void()> m_onDragEnd;
+  std::function<void()> m_onDragStart;
 
   double m_min = 0.0;
   double m_max = 100.0;

@@ -31,6 +31,8 @@
 #include "shell/tooltip/tooltip_placement.h"
 #include "shell/wayland/layer_shell.h"
 #include "ui/controls/grid_view.h"
+#include "ui/controls/select.h"
+#include "ui/controls/select_dropdown_popup.h"
 #include "ui/controls/glyph.h"
 #include "ui/controls/image.h"
 #include "ui/builders.h"
@@ -41,6 +43,7 @@
 #include "wayland/wayland_connection.h"
 #include "system/brightness_service.h"
 #include "notification/notification_manager.h"
+#include "pipewire/pipewire_service.h"
 #include "lib/render/core/color.h"
 
 #include <algorithm>
@@ -54,6 +57,9 @@
 #include <wayland-client-protocol.h>
 #include <pwd.h>
 #include <fstream>
+
+using AudioNode = ::AudioNode;
+using AudioState = ::AudioState;
 
 namespace {
 
@@ -3638,8 +3644,8 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
   const float headerH = 36.0F * contentScale;
   const float headerY = 12.0F * contentScale;       // 12px from top of pill
   const float gridY = 56.0F * contentScale;          // 12 + 36 + 8 = 56px from top
-  const float innerPad = 16.0F * contentScale;       // 16px left/right/bottom padding
-  const float colGap = 12.0F * contentScale;         // 12px gap between columns
+  const float innerPad = 12.0F * contentScale;       // 12px left/right/bottom padding (reduced from 16px)
+  const float colGap = 8.0F * contentScale;         // 8px gap between columns (reduced from 12px)
   const float controlH = Style::controlHeight * contentScale;
 
   // Root for expanded Bento grid (inside contentClip, positioned each frame)
@@ -3802,18 +3808,18 @@ auto mainContent = instance.notchBentoRoot->addChild(
   );
   instance.notchBentoGrid = static_cast<Flex*>(mainContent);
   mainContent->setPosition(innerPad, gridY);
-  // mainContent size set per-frame in layoutNotchWidgets
+// mainContent size set per-frame in layoutNotchWidgets
 
 // Column flexGrow proportions: 0.21, 0.35, 0.24, 0.20 (sum = 1.0)
-   // With 3 gaps of 12px = 36px total gap space subtracted from usable width.
+// With 3 gaps of 8px = 24px total gap space subtracted from usable width.
 
-   // Helper lambda for native card styling (SurfaceContainer fill, 1px OutlineVariant border, 16px radius)
-   auto styleCard = [contentScale](Flex& card) {
-     card.setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
-     card.setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
-     card.setRadius(Style::scaledRadiusXl(contentScale));
-     card.setPadding(Style::cardPadding * contentScale);
-   };
+// Helper lambda for native card styling (SurfaceContainer fill, 1px OutlineVariant border, 12px radius)
+    auto styleCard = [contentScale](Flex& card) {
+      card.setFill(colorSpecFromRole(ColorRole::SurfaceContainer));
+      card.setBorder(colorSpecFromRole(ColorRole::OutlineVariant), Style::borderWidth);
+      card.setRadius(Style::scaledRadiusXl(contentScale));
+      card.setPadding(10.0F * contentScale);  // Reduced from 14px for more square/compact look
+    };
 
    // ---- Column 1 (21%): Clock, Date & System Info Card ----
    instance.notchClockCard = static_cast<Flex*>(mainContent->addChild(
@@ -4018,9 +4024,14 @@ auto mainContent = instance.notchBentoRoot->addChild(
   ));
   instance.notchVolumeMuteButton->setOnClick([&instance]() {
     if (instance.m_audio) {
-      auto& audio = *instance.m_audio;
-      bool currentlyMuted = !audio.state().sinks.empty() && audio.state().sinks[0].muted;
-      audio.setSinkMuted(instance.m_audio->state().defaultSinkId, !currentlyMuted);
+      auto& state = instance.m_audio->state();
+      const AudioNode* sink = [&state]() -> const AudioNode* {
+        for (const auto& s : state.sinks) if (s.id == state.defaultSinkId) return &s;
+        return state.sinks.empty() ? nullptr : &state.sinks[0];
+      }();
+      if (sink) {
+        instance.m_audio->setSinkMuted(sink->id, !sink->muted);
+      }
     }
   });
 
@@ -4055,35 +4066,58 @@ auto mainContent = instance.notchBentoRoot->addChild(
     }
   });
 
-  // Device selector dropdown button (⋮) - opens/closes device picker
-instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild(
-      ui::button({
-          .text = "",
-          .glyph = "menu",
-          .glyphSize = Style::baseGlyphSize * 0.9F * contentScale,
+  // Device selector dropdown (Select component) - shows available output devices
+  instance.notchVolumeDevicePicker = static_cast<Select*>(volumeHeader->addChild(
+      ui::select({
+          .placeholder = "Output Device",
           .controlHeight = 28.0F * contentScale,
-          .variant = ButtonVariant::Ghost,
-          .tooltip = "Select output device",
-          .radius = 8.0F * contentScale,
-          .width = 28.0F * contentScale,
-          .height = 28.0F * contentScale,
-          .onClick = [&instance]() {
-            if (instance.m_audio) {
-              instance.notchSubMenuOpen = !instance.notchSubMenuOpen;
-            }
+          .flexGrow = 1.0F,
+          .onSelectionChanged = [&instance](std::size_t index, std::string_view label) {
+              (void)label;
+              if (instance.m_audio && index < instance.m_audio->state().sinks.size()) {
+                  instance.m_audio->setDefaultSink(instance.m_audio->state().sinks[index].id);
+              }
           },
       })
   ));
+  // Populate with available sinks
+  if (instance.m_audio) {
+      std::vector<std::string> sinkLabels;
+      for (const auto& sink : instance.m_audio->state().sinks) {
+          sinkLabels.push_back(audioDeviceLabel(sink));
+      }
+      instance.notchVolumeDevicePicker->setOptions(std::move(sinkLabels));
+      // Set current selection
+      auto& state = instance.m_audio->state();
+      for (std::size_t i = 0; i < state.sinks.size(); ++i) {
+          if (state.sinks[i].id == state.defaultSinkId) {
+              instance.notchVolumeDevicePicker->setSelectedIndexSilently(i);
+              break;
+          }
+      }
+  }
 
   // Add header row to card
 
   // Volume slider
+  // Initialize with actual volume from default sink if available
+  float initialVolume = 50.0;
+  if (instance.m_audio) {
+    auto& state = instance.m_audio->state();
+    const AudioNode* sink = [&state]() -> const AudioNode* {
+      for (const auto& s : state.sinks) if (s.id == state.defaultSinkId) return &s;
+      return state.sinks.empty() ? nullptr : &state.sinks[0];
+    }();
+    if (sink) {
+      initialVolume = sink->volume * 100.0;
+    }
+  }
   instance.notchVolumeSlider = static_cast<Slider*>(instance.notchVolumeCard->addChild(
       ui::slider({
           .minValue = 0.0,
           .maxValue = 100.0,
           .step = 1.0,
-          .value = 50.0,
+          .value = initialVolume,
           .trackHeight = 4.0F * contentScale,
           .thumbSize = 14.0F * contentScale,
           .controlHeight = controlH,
@@ -4094,7 +4128,16 @@ instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild
               std::snprintf(buf, sizeof(buf), "%.0f%%", v);
               instance.notchVolumeLabel->setText(buf);
             }
-            if (instance.m_audio) instance.m_audio->setSinkVolume(instance.m_audio->state().defaultSinkId, static_cast<float>(v) / 100.0F);
+            if (instance.m_audio) {
+              auto& state = instance.m_audio->state();
+              const AudioNode* sink = [&state]() -> const AudioNode* {
+                for (const auto& s : state.sinks) if (s.id == state.defaultSinkId) return &s;
+                return state.sinks.empty() ? nullptr : &state.sinks[0];
+              }();
+              if (sink) {
+                instance.m_audio->setSinkVolume(sink->id, static_cast<float>(v) / 100.0F);
+              }
+            }
           },
           .onDragEnd = [&instance]() { instance.notchSliderActive = false; },
           .onDragStart = [&instance]() { instance.notchSliderActive = true; },
@@ -4137,8 +4180,14 @@ instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild
   ));
   instance.notchMicMuteButton->setOnClick([&instance]() {
     if (instance.m_audio) {
-      bool currentlyMuted = instance.m_audio->state().sources.empty() || instance.m_audio->state().sources[0].muted;
-      instance.m_audio->setSourceMuted(instance.m_audio->state().defaultSourceId, !currentlyMuted);
+      auto& state = instance.m_audio->state();
+      const AudioNode* source = [&state]() -> const AudioNode* {
+        for (const auto& s : state.sources) if (s.id == state.defaultSourceId) return &s;
+        return state.sources.empty() ? nullptr : &state.sources[0];
+      }();
+      if (source) {
+        instance.m_audio->setSourceMuted(source->id, !source->muted);
+      }
     }
   });
 
@@ -4173,35 +4222,58 @@ instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild
     }
   });
 
-// Device selector dropdown button (⋮) - opens device picker
-  instance.notchMicDeviceSelector = static_cast<Button*>(micHeader->addChild(
-      ui::button({
-          .text = "",
-          .glyph = "menu",
-          .glyphSize = Style::baseGlyphSize * 0.9F * contentScale,
+  // Device selector dropdown (Select component) - shows available input devices
+  instance.notchMicDevicePicker = static_cast<Select*>(micHeader->addChild(
+      ui::select({
+          .placeholder = "Input Device",
           .controlHeight = 28.0F * contentScale,
-          .variant = ButtonVariant::Ghost,
-          .tooltip = "Select input device",
-          .radius = 8.0F * contentScale,
-          .width = 28.0F * contentScale,
-          .height = 28.0F * contentScale,
-          .onClick = [&instance]() {
-            if (instance.m_audio) {
-              instance.notchSubMenuOpen = !instance.notchSubMenuOpen;
-            }
+          .flexGrow = 1.0F,
+          .onSelectionChanged = [&instance](std::size_t index, std::string_view label) {
+              (void)label;
+              if (instance.m_audio && index < instance.m_audio->state().sources.size()) {
+                  instance.m_audio->setDefaultSource(instance.m_audio->state().sources[index].id);
+              }
           },
       })
   ));
+  // Populate with available sources
+  if (instance.m_audio) {
+      std::vector<std::string> sourceLabels;
+      for (const auto& source : instance.m_audio->state().sources) {
+          sourceLabels.push_back(audioDeviceLabel(source));
+      }
+      instance.notchMicDevicePicker->setOptions(std::move(sourceLabels));
+      // Set current selection
+      auto& state = instance.m_audio->state();
+      for (std::size_t i = 0; i < state.sources.size(); ++i) {
+          if (state.sources[i].id == state.defaultSourceId) {
+              instance.notchMicDevicePicker->setSelectedIndexSilently(i);
+              break;
+          }
+      }
+  }
 
   // Add header row to card
 
   // Microphone slider
+  // Initialize with actual volume from default source if available
+  float initialMicVolume = 50.0;
+  if (instance.m_audio) {
+    auto& state = instance.m_audio->state();
+    const AudioNode* source = [&state]() -> const AudioNode* {
+      for (const auto& s : state.sources) if (s.id == state.defaultSourceId) return &s;
+      return state.sources.empty() ? nullptr : &state.sources[0];
+    }();
+    if (source) {
+      initialMicVolume = source->volume * 100.0;
+    }
+  }
   instance.notchMicSlider = static_cast<Slider*>(instance.notchMicCard->addChild(
       ui::slider({
           .minValue = 0.0,
           .maxValue = 100.0,
           .step = 1.0,
-          .value = 50.0,
+          .value = initialMicVolume,
           .trackHeight = 4.0F * contentScale,
           .thumbSize = 14.0F * contentScale,
           .controlHeight = controlH,
@@ -4212,7 +4284,16 @@ instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild
               std::snprintf(buf, sizeof(buf), "%.0f%%", v);
               instance.notchMicLabel->setText(buf);
             }
-            if (instance.m_audio) instance.m_audio->setSourceVolume(instance.m_audio->state().defaultSourceId, static_cast<float>(v) / 100.0F);
+            if (instance.m_audio) {
+              auto& state = instance.m_audio->state();
+              const AudioNode* source = [&state]() -> const AudioNode* {
+                for (const auto& s : state.sources) if (s.id == state.defaultSourceId) return &s;
+                return state.sources.empty() ? nullptr : &state.sources[0];
+              }();
+              if (source) {
+                instance.m_audio->setSourceVolume(source->id, static_cast<float>(v) / 100.0F);
+              }
+            }
           },
           .onDragEnd = [&instance]() { instance.notchSliderActive = false; },
           .onDragStart = [&instance]() { instance.notchSliderActive = true; },
@@ -4343,12 +4424,12 @@ instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild
       std::make_unique<GridView>()
   ));
   instance.notchToggleGrid->setColumns(2);
-  instance.notchToggleGrid->setColumnGap(8.0F * contentScale);
-  instance.notchToggleGrid->setRowGap(8.0F * contentScale);
-  instance.notchToggleGrid->setPadding(innerPad);
+  instance.notchToggleGrid->setColumnGap(6.0F * contentScale);  // Reduced from 8px
+  instance.notchToggleGrid->setRowGap(6.0F * contentScale);     // Reduced from 8px
+  instance.notchToggleGrid->setPadding(8.0F * contentScale);    // Reduced from innerPad (16px)
   instance.notchToggleGrid->setStretchItems(true);
   instance.notchToggleGrid->setUniformCellSize(true);
-  instance.notchToggleGrid->setFlexGrow(0.23F);
+  instance.notchToggleGrid->setFlexGrow(0.20F);  // Adjusted to match 20% column
 
 auto createToggleTile = [&](const char* glyphOn, const char* glyphOff, const char* label, const char* tooltip,
                               std::function<bool()> getActive, std::function<void(bool)> setActive,
@@ -4383,22 +4464,21 @@ auto createToggleTile = [&](const char* glyphOn, const char* glyphOff, const cha
             .contentAlign = ButtonContentAlign::Center,
             .variant = getActive() ? ButtonVariant::Ghost : ButtonVariant::Default,
             .tooltip = tooltip,
-            .radius = Style::scaledRadiusLg(contentScale),
+            .radius = 12.0F * contentScale,  // Match card radius for square-ish look
         })
     ));
     btn->setDirection(FlexDirection::Vertical);
     // Add the flex content as button content (icon + label stacked vertically)
     btn->addChild(std::move(tileNode));
-    // Store label node reference for color updates
-    Label* labelPtr = labelNode;
-    // Set onClick handler
-    btn->setOnClick([&]() {
+    // Set onClick handler - capture labelPtrOut by value to avoid dangling reference
+    Label** labelPtrOutCaptured = labelPtrOut;
+    btn->setOnClick([=]() {
       bool newState = !getActive();
       setActive(newState);
       if (btn != nullptr) {
         btn->setVariant(newState ? ButtonVariant::Primary : ButtonVariant::Default);
-        if (labelPtr != nullptr) {
-          labelPtr->setColor(newState ? colorSpecFromRole(ColorRole::OnPrimary) : colorSpecFromRole(ColorRole::OnSurface));
+        if (labelPtrOutCaptured != nullptr && *labelPtrOutCaptured != nullptr) {
+          (*labelPtrOutCaptured)->setColor(newState ? colorSpecFromRole(ColorRole::OnPrimary) : colorSpecFromRole(ColorRole::OnSurface));
         }
       }
     });
@@ -4451,6 +4531,16 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
   instance.m_notifications = m_notifications;
   instance.m_idleInhibitor = m_idleInhibitor;
 
+  // Register PipeWire change callback to rebuild device pickers when audio state changes
+  if (instance.m_audio) {
+    instance.m_audio->setChangeCallback([this, &instance]() {
+      if (instance.isNotchMode && instance.surface) {
+        instance.surface->requestLayout();
+        instance.surface->requestRedraw();
+      }
+    });
+  }
+
   Renderer& renderer = instance.surface->renderTarget().renderer();
 
   const auto w = static_cast<float>(width);
@@ -4489,6 +4579,18 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
   instance.sceneRoot = ui::node({});
   instance.sceneRoot->setAnimationManager(&instance.animations);
   instance.sceneRoot->setSize(w, h);
+
+  // Create SelectDropdownPopup for device pickers
+  instance.selectDropdownPopup = std::make_unique<SelectDropdownPopup>(m_platform->wayland(), *m_renderContext);
+  if (m_config != nullptr) {
+    instance.selectDropdownPopup->setShadowConfig(m_config->config().shell.shadow);
+  }
+  instance.selectDropdownPopup->setParent(
+      LayerShell::popupAttach(instance.surface->layerSurface()),
+      instance.surface->wlSurface(),
+      instance.output
+  );
+  instance.sceneRoot->setPopupContext(instance.selectDropdownPopup.get());
 
   auto slide = ui::node({});
   slide->setParticipatesInLayout(false);
@@ -5517,35 +5619,73 @@ void Bar::prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool /*need
 
     // Sync microphone mute state and volume
     if (instance.notchMicMuteButton != nullptr && instance.m_audio) {
-      bool micMute = instance.m_audio->state().sources.empty() || instance.m_audio->state().sources[0].muted;
-      instance.notchMicMuteButton->setGlyph(micMute ? "microphone-off" : "microphone");
-      instance.notchMicMuteButton->setVariant(micMute ? ButtonVariant::Default : ButtonVariant::Ghost);
+      auto& state = instance.m_audio->state();
+      const AudioNode* source = [&state]() -> const AudioNode* {
+        for (const auto& s : state.sources) if (s.id == state.defaultSourceId) return &s;
+        return state.sources.empty() ? nullptr : &state.sources[0];
+      }();
+      if (source) {
+        bool micMute = source->muted;
+        instance.notchMicMuteButton->setGlyph(micMute ? "microphone-off" : "microphone");
+        instance.notchMicMuteButton->setVariant(micMute ? ButtonVariant::Default : ButtonVariant::Ghost);
+      }
     }
     if (instance.notchMicLabel != nullptr && instance.m_audio) {
-      float micVol = instance.m_audio->state().sources.empty() ? 0.0F : instance.m_audio->state().sources[0].volume;
+      auto& state = instance.m_audio->state();
+      float micVol = 0.0F;
+      const AudioNode* source = [&state]() -> const AudioNode* {
+        for (const auto& s : state.sources) if (s.id == state.defaultSourceId) return &s;
+        return state.sources.empty() ? nullptr : &state.sources[0];
+      }();
+      if (source) micVol = source->volume;
       char buf[16];
       std::snprintf(buf, sizeof(buf), "%.0f%%", micVol * 100.0F);
       instance.notchMicLabel->setText(buf);
     }
     if (instance.notchMicSlider != nullptr && instance.m_audio) {
-      float micVol = instance.m_audio->state().sources.empty() ? 0.0F : instance.m_audio->state().sources[0].volume;
+      auto& state = instance.m_audio->state();
+      float micVol = 0.0F;
+      const AudioNode* source = [&state]() -> const AudioNode* {
+        for (const auto& s : state.sources) if (s.id == state.defaultSourceId) return &s;
+        return state.sources.empty() ? nullptr : &state.sources[0];
+      }();
+      if (source) micVol = source->volume;
       instance.notchMicSlider->setValue(micVol * 100.0);
     }
 
     // Sync speaker mute state and volume
     if (instance.notchVolumeMuteButton != nullptr && instance.m_audio) {
-      bool volMute = instance.m_audio->state().sinks.empty() || instance.m_audio->state().sinks[0].muted;
-      instance.notchVolumeMuteButton->setGlyph(volMute ? "volume-off" : "volume-high");
-      instance.notchVolumeMuteButton->setVariant(volMute ? ButtonVariant::Default : ButtonVariant::Ghost);
+      auto& state = instance.m_audio->state();
+      const AudioNode* sink = [&state]() -> const AudioNode* {
+        for (const auto& s : state.sinks) if (s.id == state.defaultSinkId) return &s;
+        return state.sinks.empty() ? nullptr : &state.sinks[0];
+      }();
+      if (sink) {
+        bool volMute = sink->muted;
+        instance.notchVolumeMuteButton->setGlyph(volMute ? "volume-off" : "volume-high");
+        instance.notchVolumeMuteButton->setVariant(volMute ? ButtonVariant::Default : ButtonVariant::Ghost);
+      }
     }
     if (instance.notchVolumeLabel != nullptr && instance.m_audio) {
-      float vol = instance.m_audio->state().sinks.empty() ? 0.0F : instance.m_audio->state().sinks[0].volume;
+      auto& state = instance.m_audio->state();
+      float vol = 0.0F;
+      const AudioNode* sink = [&state]() -> const AudioNode* {
+        for (const auto& s : state.sinks) if (s.id == state.defaultSinkId) return &s;
+        return state.sinks.empty() ? nullptr : &state.sinks[0];
+      }();
+      if (sink) vol = sink->volume;
       char buf[16];
       std::snprintf(buf, sizeof(buf), "%.0f%%", vol * 100.0F);
       instance.notchVolumeLabel->setText(buf);
     }
     if (instance.notchVolumeSlider != nullptr && instance.m_audio) {
-      float vol = instance.m_audio->state().sinks.empty() ? 0.0F : instance.m_audio->state().sinks[0].volume;
+      auto& state = instance.m_audio->state();
+      float vol = 0.0F;
+      const AudioNode* sink = [&state]() -> const AudioNode* {
+        for (const auto& s : state.sinks) if (s.id == state.defaultSinkId) return &s;
+        return state.sinks.empty() ? nullptr : &state.sinks[0];
+      }();
+      if (sink) vol = sink->volume;
       instance.notchVolumeSlider->setValue(vol * 100.0);
     }
 
@@ -5553,6 +5693,44 @@ void Bar::prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool /*need
     if (instance.notchBrightnessSlider != nullptr && instance.m_brightness) {
       float brightness = instance.m_brightness->displays().empty() ? 0.0F : instance.m_brightness->displays()[0].brightness;
       instance.notchBrightnessSlider->setValue(brightness * 100.0);
+    }
+
+    // Sync output device picker
+    if (instance.notchVolumeDevicePicker != nullptr && instance.m_audio) {
+      auto& state = instance.m_audio->state();
+      if (!state.sinks.empty()) {
+        // Update options if device list changed
+        std::vector<std::string> sinkLabels;
+        for (const auto& sink : state.sinks) {
+          sinkLabels.push_back(audioDeviceLabel(sink));
+        }
+        instance.notchVolumeDevicePicker->setOptions(std::move(sinkLabels));
+        // Update selection
+        for (std::size_t i = 0; i < state.sinks.size(); ++i) {
+          if (state.sinks[i].id == state.defaultSinkId) {
+            instance.notchVolumeDevicePicker->setSelectedIndexSilently(i);
+            break;
+          }
+        }
+      }
+    }
+
+    // Sync input device picker
+    if (instance.notchMicDevicePicker != nullptr && instance.m_audio) {
+      auto& state = instance.m_audio->state();
+      if (!state.sources.empty()) {
+        std::vector<std::string> sourceLabels;
+        for (const auto& source : state.sources) {
+          sourceLabels.push_back(audioDeviceLabel(source));
+        }
+        instance.notchMicDevicePicker->setOptions(std::move(sourceLabels));
+        for (std::size_t i = 0; i < state.sources.size(); ++i) {
+          if (state.sources[i].id == state.defaultSourceId) {
+            instance.notchMicDevicePicker->setSelectedIndexSilently(i);
+            break;
+          }
+        }
+      }
     }
   }
 

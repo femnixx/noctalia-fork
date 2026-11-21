@@ -621,6 +621,9 @@ namespace ui {
     if (props.onValueChanged) {
       control->setOnValueChanged(std::move(props.onValueChanged));
     }
+    if (props.onDragStart) {
+      control->setOnDragStart(std::move(props.onDragStart));
+    }
     if (props.onDragEnd) {
       control->setOnDragEnd(std::move(props.onDragEnd));
     }

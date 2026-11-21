@@ -28,6 +28,9 @@ class Image;
 class Label;
 class Node;
 class ProgressBar;
+class Select;
+class SelectDropdownPopup;
+class Slider;
 class Slider;
 
 // Forward declarations for services
@@ -233,11 +236,16 @@ struct BarInstance {
   Label* notchVolumeSinkLabel = nullptr;
   Button* notchVolumeMuteButton = nullptr;
   Button* notchVolumeDeviceSelector = nullptr;
+  class Select* notchVolumeDevicePicker = nullptr;
+  bool notchVolumePickerOpen = false;
   Slider* notchMicSlider = nullptr;
   Label* notchMicLabel = nullptr;
   Label* notchMicSourceLabel = nullptr;
   Button* notchMicMuteButton = nullptr;
   Button* notchMicDeviceSelector = nullptr;
+  class Select* notchMicDevicePicker = nullptr;
+  bool notchMicPickerOpen = false;
+  std::unique_ptr<SelectDropdownPopup> selectDropdownPopup;
   Slider* notchBrightnessSlider = nullptr;
   Label* notchBrightnessLabel = nullptr;
   // Column 4 (~20%): 2x2 Quick Toggle Tiles (Wi-Fi, Bluetooth, DND, Caffeine)
