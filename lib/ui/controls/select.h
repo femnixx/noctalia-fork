@@ -35,6 +35,7 @@ public:
   void setControlHeight(float height);
   void setHorizontalPadding(float padding);
   void setGlyphSize(float size);
+  void setTriggerGlyph(std::string_view glyph);
   void setOptionIndicators(std::vector<ColorSpec> colors);
   void setColorSwatchPreviews(std::vector<ColorSwatchPreview> previews);
   void setNotifyOnReselect(bool enabled);

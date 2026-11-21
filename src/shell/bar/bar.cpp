@@ -2633,8 +2633,8 @@ auto surfaceConfig = LayerSurfaceConfig{
   if (isNotchMode) {
     inst->maxSurfaceW = surfaceSpec.surfaceWidth;
     inst->maxSurfaceH = surfaceSpec.surfaceHeight;
-    // Render initial frame to commit a buffer so the surface is mapped and receives configure/pointer events.
-    buildScene(*inst, surfaceSpec.surfaceWidth, surfaceSpec.surfaceHeight);
+    // Scene will be built in configure callback after surface->initialize() creates the layer surface.
+    // This ensures layerSurface() is valid when SelectDropdownPopup needs it.
   }
 
   if (!instance->surface->initialize(output.output)) {
@@ -4067,10 +4067,12 @@ auto mainContent = instance.notchBentoRoot->addChild(
   });
 
   // Device selector dropdown (Select component) - shows available output devices
+  // Trigger shows only speaker icon, dropdown shows device names with checkmarks
   instance.notchVolumeDevicePicker = static_cast<Select*>(volumeHeader->addChild(
       ui::select({
-          .placeholder = "Output Device",
+          .placeholder = "",
           .controlHeight = 28.0F * contentScale,
+          .triggerGlyph = "volume-high",
           .flexGrow = 1.0F,
           .onSelectionChanged = [&instance](std::size_t index, std::string_view label) {
               (void)label;
@@ -4223,10 +4225,12 @@ auto mainContent = instance.notchBentoRoot->addChild(
   });
 
   // Device selector dropdown (Select component) - shows available input devices
+  // Trigger shows only microphone icon, dropdown shows device names with checkmarks
   instance.notchMicDevicePicker = static_cast<Select*>(micHeader->addChild(
       ui::select({
-          .placeholder = "Input Device",
+          .placeholder = "",
           .controlHeight = 28.0F * contentScale,
+          .triggerGlyph = "microphone",
           .flexGrow = 1.0F,
           .onSelectionChanged = [&instance](std::size_t index, std::string_view label) {
               (void)label;
@@ -4574,6 +4578,13 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
 
   if (instance.sceneRoot != nullptr) {
     return; // Already initialized
+  }
+
+  // Defensive: layerSurface must exist for SelectDropdownPopup parent.
+  // If not ready yet, the configure callback will call initNotchScene again.
+  if (instance.surface->layerSurface() == nullptr) {
+    kLog.debug("Notch: layerSurface not ready yet, deferring scene init");
+    return;
   }
 
   instance.sceneRoot = ui::node({});

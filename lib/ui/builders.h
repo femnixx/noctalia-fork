@@ -297,6 +297,7 @@ namespace ui {
     std::optional<float> controlHeight = std::nullopt;
     std::optional<float> horizontalPadding = std::nullopt;
     std::optional<float> glyphSize = std::nullopt;
+    std::optional<std::string> triggerGlyph = std::nullopt;
     std::optional<std::vector<ColorSpec>> optionIndicators = std::nullopt;
     std::optional<std::vector<ColorSwatchPreview>> colorSwatchPreviews = std::nullopt;
     std::optional<bool> notifyOnReselect = std::nullopt;

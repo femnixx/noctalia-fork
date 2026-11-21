@@ -206,6 +206,13 @@ void Select::setGlyphSize(float size) {
   markLayoutDirty();
 }
 
+void Select::setTriggerGlyph(std::string_view glyph) {
+  if (m_triggerGlyph != nullptr) {
+    m_triggerGlyph->setGlyph(glyph);
+    markPaintDirty();
+  }
+}
+
 void Select::setOptionIndicators(std::vector<ColorSpec> colors) {
   m_indicatorColors = std::move(colors);
   if (m_triggerIndicator != nullptr && m_selectedIndex < m_indicatorColors.size()) {

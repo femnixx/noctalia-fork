@@ -564,6 +564,9 @@ namespace ui {
     if (props.glyphSize.has_value()) {
       control->setGlyphSize(*props.glyphSize);
     }
+    if (props.triggerGlyph.has_value()) {
+      control->setTriggerGlyph(*props.triggerGlyph);
+    }
     if (props.optionIndicators.has_value()) {
       control->setOptionIndicators(std::move(*props.optionIndicators));
     }
