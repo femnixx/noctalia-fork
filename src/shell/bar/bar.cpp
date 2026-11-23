@@ -1573,7 +1573,7 @@ namespace {
 } // namespace
 
 // Forward declaration
-void populateCustomDeviceDropdowns(BarInstance& instance, float contentScale);
+void updateNotchDeviceSelects(BarInstance& instance, float contentScale);
 void updateNotchMuteButtonGlyphs(BarInstance& instance);
 
 Bar::Bar() = default;
@@ -4085,84 +4085,37 @@ auto mainContent = instance.notchBentoRoot->addChild(
     }
   });
 
-  // ===== CUSTOM IN-NOTCH DROPDOWN FOR VOLUME DEVICE SELECTION =====
-  // Trigger button (chevron-down icon)
-  instance.notchVolumeDeviceSelector = static_cast<Button*>(volumeHeader->addChild(
-      ui::button({
-          .text = "",
-          .glyph = "chevron-down",
-          .glyphSize = Style::baseGlyphSize * 0.9F * contentScale,
-          .controlHeight = 28.0F * contentScale,
-          .variant = ButtonVariant::Ghost,
-          .tooltip = "Select output device",
-          .radius = 8.0F * contentScale,
-          .width = 28.0F * contentScale,
-          .height = 28.0F * contentScale,
-          .onClick = [&instance]() {
-            kLog.debug("NotchDropdown: Volume trigger clicked");
-            if (instance.m_audio) {
-              instance.notchVolumeDropdownOpen = !instance.notchVolumeDropdownOpen;
-              kLog.debug("NotchDropdown: Volume dropdown open={}", instance.notchVolumeDropdownOpen);
-              if (instance.notchVolumeDropdown) {
-                instance.notchVolumeDropdown->setVisible(instance.notchVolumeDropdownOpen);
-                kLog.debug("NotchDropdown: Volume dropdown setVisible({})", instance.notchVolumeDropdownOpen);
-              }
-              if (instance.notchVolumeDropdownOverlay) {
-                instance.notchVolumeDropdownOverlay->setVisible(instance.notchVolumeDropdownOpen);
-                // Resize overlay to cover entire card
-                if (instance.notchVolumeDropdownOpen && instance.notchVolumeCard) {
-                  instance.notchVolumeDropdownOverlay->setSize(instance.notchVolumeCard->width(), instance.notchVolumeCard->height());
-                  instance.notchVolumeDropdownOverlay->setPosition(0, 0);
-                }
-                kLog.debug("NotchDropdown: Volume dropdown overlay setVisible({})", instance.notchVolumeDropdownOpen);
-              }
-            }
-          },
-      })
+  // ===== VOLUME DEVICE SELECTOR (using built-in Select control) =====
+  // Create Select for output device selection
+  std::function<void(std::size_t, std::string_view)> volumeSelectCallback = [&instance](std::size_t index, std::string_view label) {
+    kLog.debug("NotchSelect: Volume selection changed index={} label={}", index, label);
+    if (instance.m_audio) {
+      auto& state = instance.m_audio->state();
+      if (index < state.sinks.size()) {
+        instance.m_audio->setDefaultSink(state.sinks[index].id);
+        kLog.debug("NotchSelect: Set default sink to {}", state.sinks[index].id);
+      }
+      // Update mute button glyph for new default sink
+      updateNotchMuteButtonGlyphs(instance);
+    }
+  };
+
+  ui::SelectProps volumeSelectProps;
+  volumeSelectProps.options = std::vector<std::string>{};
+  volumeSelectProps.selectedIndex = std::nullopt;
+  volumeSelectProps.placeholder = "Select output";
+  volumeSelectProps.triggerGlyph = "chevron-down";
+  volumeSelectProps.controlHeight = 28.0F * contentScale;
+  volumeSelectProps.width = 140.0F * contentScale;
+  volumeSelectProps.onSelectionChanged = volumeSelectCallback;
+
+  instance.notchVolumeSelect = static_cast<Select*>(volumeHeader->addChild(
+      ui::select(std::move(volumeSelectProps))
   ));
+  instance.notchVolumeSelect->setMinWidth(140.0F * contentScale);
+  instance.notchVolumeSelect->setMaxWidth(140.0F * contentScale);
 
   // Add header row to card
-
-  // Custom dropdown Flex (initially hidden, positioned below header)
-  instance.notchVolumeDropdown = static_cast<Flex*>(instance.notchVolumeCard->addChild(
-      ui::flex(FlexDirection::Vertical, {
-          .align = FlexAlign::Stretch,
-          .justify = FlexJustify::Start,
-          .wrap = false,
-          .gap = 2.0F * contentScale,
-          .padding = 8.0F * contentScale,
-          .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-          .radius = 10.0F * contentScale,
-          .border = colorSpecFromRole(ColorRole::OutlineVariant),
-          .borderWidth = Style::borderWidth,
-          .flexGrow = 0.0F,
-          .visible = false,
-      })
-  ));
-  instance.notchVolumeDropdown->setDirection(FlexDirection::Vertical);
-  instance.notchVolumeDropdown->setClipChildren(true);
-  instance.notchVolumeDropdown->setParticipatesInLayout(false);
-  instance.notchVolumeDropdown->setZIndex(100);
-
-  // Click-outside handler to close dropdown (covers entire card, behind dropdown)
-  instance.notchVolumeDropdownOverlay = static_cast<InputArea*>(instance.notchVolumeCard->addChild(
-      ui::inputArea({
-          .acceptedButtons = 0xFFFFFFFF,
-          .propagateEvents = true,
-          .hitTestVisible = true,
-      })
-  ));
-  instance.notchVolumeDropdownOverlay->setParticipatesInLayout(false);
-  instance.notchVolumeDropdownOverlay->setZIndex(99);
-  instance.notchVolumeDropdownOverlay->setVisible(false);
-  instance.notchVolumeDropdownOverlay->setOnClick([&instance](const InputArea::PointerData&) {
-    kLog.debug("NotchDropdown: Click outside volume dropdown, closing");
-    instance.notchVolumeDropdownOpen = false;
-    if (instance.notchVolumeDropdown) {
-      instance.notchVolumeDropdown->setVisible(false);
-      instance.notchVolumeDropdownOverlay->setVisible(false);
-    }
-  });
 
   // Volume slider
   // Initialize with actual volume from default sink if available
@@ -4302,91 +4255,44 @@ auto mainContent = instance.notchBentoRoot->addChild(
     }
   });
 
-  // ===== CUSTOM IN-NOTCH DROPDOWN FOR MIC DEVICE SELECTION =====
-  // Trigger button (chevron-down icon)
-  instance.notchMicDeviceSelector = static_cast<Button*>(micHeader->addChild(
-      ui::button({
-          .text = "",
-          .glyph = "chevron-down",
-          .glyphSize = Style::baseGlyphSize * 0.9F * contentScale,
-          .controlHeight = 28.0F * contentScale,
-          .variant = ButtonVariant::Ghost,
-          .tooltip = "Select input device",
-          .radius = 8.0F * contentScale,
-          .width = 28.0F * contentScale,
-          .height = 28.0F * contentScale,
-          .onClick = [&instance]() {
-            kLog.debug("NotchDropdown: Mic trigger clicked");
-            if (instance.m_audio) {
-              instance.notchMicDropdownOpen = !instance.notchMicDropdownOpen;
-              kLog.debug("NotchDropdown: Mic dropdown open={}", instance.notchMicDropdownOpen);
-              if (instance.notchMicDropdown) {
-                instance.notchMicDropdown->setVisible(instance.notchMicDropdownOpen);
-                kLog.debug("NotchDropdown: Mic dropdown setVisible({})", instance.notchMicDropdownOpen);
-              }
-              if (instance.notchMicDropdownOverlay) {
-                instance.notchMicDropdownOverlay->setVisible(instance.notchMicDropdownOpen);
-                // Resize overlay to cover entire card
-                if (instance.notchMicDropdownOpen && instance.notchMicCard) {
-                  instance.notchMicDropdownOverlay->setSize(instance.notchMicCard->width(), instance.notchMicCard->height());
-                  instance.notchMicDropdownOverlay->setPosition(0, 0);
-                }
-                kLog.debug("NotchDropdown: Mic dropdown overlay setVisible({})", instance.notchMicDropdownOpen);
-              }
-            }
-          },
-      })
-  ));
+  std::function<void(std::size_t, std::string_view)> micSelectCallback = [&instance](std::size_t index, std::string_view label) {
+    kLog.debug("NotchSelect: Mic selection changed index={} label={}", index, label);
+    if (instance.m_audio) {
+      auto& state = instance.m_audio->state();
+      if (index < state.sources.size()) {
+        instance.m_audio->setDefaultSource(state.sources[index].id);
+        kLog.debug("NotchSelect: Set default source to {}", state.sources[index].id);
+      }
+      // Update mute button glyph for new default source
+      updateNotchMuteButtonGlyphs(instance);
+    }
+  };
 
-  // Initial population of device dropdowns
-  if (instance.m_audio) {
-    kLog.debug("NotchDropdown: Initial population of device dropdowns");
-    const float contentScale = static_cast<float>(instance.barConfig.scale);
-    populateCustomDeviceDropdowns(instance, contentScale);
-  }
+  // ===== MIC DEVICE SELECTOR (using built-in Select control) =====
+  // Create Select for input device selection
+  ui::SelectProps micSelectProps;
+  micSelectProps.options = std::vector<std::string>{};
+  micSelectProps.selectedIndex = std::nullopt;
+  micSelectProps.placeholder = "Select input";
+  micSelectProps.triggerGlyph = "chevron-down";
+  micSelectProps.controlHeight = 28.0F * contentScale;
+  micSelectProps.width = 140.0F * contentScale;
+  micSelectProps.onSelectionChanged = micSelectCallback;
+
+  instance.notchMicSelect = static_cast<Select*>(micHeader->addChild(
+      ui::select(std::move(micSelectProps))
+  ));
+  instance.notchMicSelect->setMinWidth(140.0F * contentScale);
+  instance.notchMicSelect->setMaxWidth(140.0F * contentScale);
 
   // Add header row to card
 
-  // Custom dropdown Flex (initially hidden, positioned below header)
-  instance.notchMicDropdown = static_cast<Flex*>(instance.notchMicCard->addChild(
-      ui::flex(FlexDirection::Vertical, {
-          .align = FlexAlign::Stretch,
-          .justify = FlexJustify::Start,
-          .wrap = false,
-          .gap = 2.0F * contentScale,
-          .padding = 8.0F * contentScale,
-          .fill = colorSpecFromRole(ColorRole::SurfaceContainer),
-          .radius = 10.0F * contentScale,
-          .border = colorSpecFromRole(ColorRole::OutlineVariant),
-          .borderWidth = Style::borderWidth,
-          .flexGrow = 0.0F,
-          .visible = false,
-      })
-  ));
-  instance.notchMicDropdown->setDirection(FlexDirection::Vertical);
-  instance.notchMicDropdown->setClipChildren(true);
-  instance.notchMicDropdown->setParticipatesInLayout(false);
-  instance.notchMicDropdown->setZIndex(100);
-
-  // Click-outside handler to close dropdown (covers entire card, behind dropdown)
-  instance.notchMicDropdownOverlay = static_cast<InputArea*>(instance.notchMicCard->addChild(
-      ui::inputArea({
-          .acceptedButtons = 0xFFFFFFFF,
-          .propagateEvents = true,
-          .hitTestVisible = true,
-      })
-  ));
-  instance.notchMicDropdownOverlay->setParticipatesInLayout(false);
-  instance.notchMicDropdownOverlay->setZIndex(99);
-  instance.notchMicDropdownOverlay->setVisible(false);
-  instance.notchMicDropdownOverlay->setOnClick([&instance](const InputArea::PointerData&) {
-    kLog.debug("NotchDropdown: Click outside mic dropdown, closing");
-    instance.notchMicDropdownOpen = false;
-    if (instance.notchMicDropdown) {
-      instance.notchMicDropdown->setVisible(false);
-      instance.notchMicDropdownOverlay->setVisible(false);
-    }
-  });
+  // Initial population of device dropdowns
+  if (instance.m_audio) {
+    kLog.debug("NotchSelect: Initial population of device selects");
+    const float contentScale = static_cast<float>(instance.barConfig.scale);
+    updateNotchDeviceSelects(instance, contentScale);
+  }
 
   // Microphone slider
   // Initialize with actual volume from default source if available
@@ -4681,131 +4587,60 @@ void updateNotchMuteButtonGlyphs(BarInstance& instance) {
   }
 }
 
-// Helper to populate custom device dropdowns
-void populateCustomDeviceDropdowns(BarInstance& instance, float contentScale) {
-  kLog.debug("NotchDropdown: populateCustomDeviceDropdowns called, volumeOpen={}, micOpen={}",
-             instance.notchVolumeDropdownOpen, instance.notchMicDropdownOpen);
+// Helper to update notch device Select controls with current device list
+void updateNotchDeviceSelects(BarInstance& instance, float contentScale) {
+  kLog.debug("NotchSelect: updateNotchDeviceSelects called");
   if (!instance.m_audio) {
-    kLog.debug("NotchDropdown: No audio service, returning");
+    kLog.debug("NotchSelect: No audio service, returning");
     return;
   }
 
   auto& state = instance.m_audio->state();
-  kLog.debug("NotchDropdown: Found {} sinks, {} sources", state.sinks.size(), state.sources.size());
+  kLog.debug("NotchSelect: Found {} sinks, {} sources", state.sinks.size(), state.sources.size());
 
-  // Helper to clear all children from a Flex
-  auto clearFlexChildren = [](Flex* flex) {
-    while (!flex->children().empty()) {
-      flex->removeChild(flex->children().back().get());
-    }
-  };
+  // Update volume select
+  if (instance.notchVolumeSelect) {
+    std::vector<std::string> sinkLabels;
+    sinkLabels.reserve(state.sinks.size());
+    std::size_t defaultSinkIndex = std::string::npos;
 
-  // Populate volume dropdown
-  if (instance.notchVolumeDropdown) {
-    kLog.debug("NotchDropdown: Populating volume dropdown with {} sinks", state.sinks.size());
-    clearFlexChildren(instance.notchVolumeDropdown);
-    for (const auto& sink : state.sinks) {
-      bool isDefault = (sink.id == state.defaultSinkId);
-      instance.notchVolumeDropdown->addChild(
-          ui::button({
-              .text = audioDeviceLabel(sink),
-              .glyph = isDefault ? std::optional<std::string>("check") : std::nullopt,
-              .glyphSize = Style::baseGlyphSize * 0.8F * contentScale,
-              .controlHeight = 32.0F * contentScale,
-              .enabled = true,
-              .selected = false,
-              .contentAlign = ButtonContentAlign::Start,
-              .variant = ButtonVariant::Ghost,
-              .radius = 8.0F * contentScale,
-              .onClick = [&, sinkId = sink.id]() {
-                kLog.debug("NotchDropdown: Volume item clicked, sinkId={}", sinkId);
-                if (instance.m_audio) {
-                  instance.m_audio->setDefaultSink(sinkId);
-                  instance.notchVolumeDropdownOpen = false;
-                  if (instance.notchVolumeDropdown) {
-                    instance.notchVolumeDropdown->setVisible(false);
-                    kLog.debug("NotchDropdown: Volume dropdown hidden after selection");
-                  }
-                  if (instance.notchVolumeDropdownOverlay) {
-                    instance.notchVolumeDropdownOverlay->setVisible(false);
-                  }
-                  // Update mute button glyph for new default sink
-                  if (instance.notchVolumeMuteButton) {
-                    auto& state2 = instance.m_audio->state();
-                    const AudioNode* newSink = [&state2]() -> const AudioNode* {
-                      for (const auto& s : state2.sinks) if (s.id == state2.defaultSinkId) return &s;
-                      return state2.sinks.empty() ? nullptr : &state2.sinks[0];
-                    }();
-                    if (newSink) {
-                      instance.notchVolumeMuteButton->setGlyph(newSink->muted ? "volume-off" : "volume-high");
-                      instance.notchVolumeMuteButton->setVariant(newSink->muted ? ButtonVariant::Default : ButtonVariant::Ghost);
-                      kLog.debug("NotchDropdown: Updated volume mute button glyph for sinkId={}, muted={}", newSink->id, newSink->muted);
-                    }
-                  }
-                }
-              },
-          })
-      );
-      if (isDefault) {
-        // Style the checkmark
-        // The glyph is already set in the button
+    for (std::size_t i = 0; i < state.sinks.size(); ++i) {
+      sinkLabels.push_back(audioDeviceLabel(state.sinks[i]));
+      if (state.sinks[i].id == state.defaultSinkId) {
+        defaultSinkIndex = i;
       }
     }
-  } else {
-    kLog.debug("NotchDropdown: notchVolumeDropdown is null");
+
+    instance.notchVolumeSelect->setOptions(std::move(sinkLabels));
+    if (defaultSinkIndex != std::string::npos) {
+      instance.notchVolumeSelect->setSelectedIndexSilently(defaultSinkIndex);
+    } else if (!state.sinks.empty()) {
+      instance.notchVolumeSelect->setSelectedIndexSilently(0);
+    }
+    kLog.debug("NotchSelect: Volume select updated, defaultSinkIndex={}", defaultSinkIndex);
   }
 
-  // Populate mic dropdown
-  if (instance.notchMicDropdown) {
-    kLog.debug("NotchDropdown: Populating mic dropdown with {} sources", state.sources.size());
-    clearFlexChildren(instance.notchMicDropdown);
-    for (const auto& source : state.sources) {
-      bool isDefault = (source.id == state.defaultSourceId);
-      instance.notchMicDropdown->addChild(
-          ui::button({
-              .text = audioDeviceLabel(source),
-              .glyph = isDefault ? std::optional<std::string>("check") : std::nullopt,
-              .glyphSize = Style::baseGlyphSize * 0.8F * contentScale,
-              .controlHeight = 32.0F * contentScale,
-              .enabled = true,
-              .selected = false,
-              .contentAlign = ButtonContentAlign::Start,
-              .variant = ButtonVariant::Ghost,
-              .radius = 8.0F * contentScale,
-              .onClick = [&, sourceId = source.id]() {
-                kLog.debug("NotchDropdown: Mic item clicked, sourceId={}", sourceId);
-                if (instance.m_audio) {
-                  instance.m_audio->setDefaultSource(sourceId);
-                  instance.notchMicDropdownOpen = false;
-                  if (instance.notchMicDropdown) {
-                    instance.notchMicDropdown->setVisible(false);
-                    kLog.debug("NotchDropdown: Mic dropdown hidden after selection");
-                  }
-                  if (instance.notchMicDropdownOverlay) {
-                    instance.notchMicDropdownOverlay->setVisible(false);
-                  }
-                  // Update mute button glyph for new default source
-                  if (instance.notchMicMuteButton) {
-                    auto& state2 = instance.m_audio->state();
-                    const AudioNode* newSource = [&state2]() -> const AudioNode* {
-                      for (const auto& s : state2.sources) if (s.id == state2.defaultSourceId) return &s;
-                      return state2.sources.empty() ? nullptr : &state2.sources[0];
-                    }();
-                    if (newSource) {
-                      instance.notchMicMuteButton->setGlyph(newSource->muted ? "microphone-off" : "microphone");
-                      instance.notchMicMuteButton->setVariant(newSource->muted ? ButtonVariant::Default : ButtonVariant::Ghost);
-                      kLog.debug("NotchDropdown: Updated mic mute button glyph for sourceId={}, muted={}", newSource->id, newSource->muted);
-                    }
-                  }
-                }
-              },
-          })
-      );
+  // Update mic select
+  if (instance.notchMicSelect) {
+    std::vector<std::string> sourceLabels;
+    sourceLabels.reserve(state.sources.size());
+    std::size_t defaultSourceIndex = std::string::npos;
+
+    for (std::size_t i = 0; i < state.sources.size(); ++i) {
+      sourceLabels.push_back(audioDeviceLabel(state.sources[i]));
+      if (state.sources[i].id == state.defaultSourceId) {
+        defaultSourceIndex = i;
+      }
     }
-  } else {
-    kLog.debug("NotchDropdown: notchMicDropdown is null");
+
+    instance.notchMicSelect->setOptions(std::move(sourceLabels));
+    if (defaultSourceIndex != std::string::npos) {
+      instance.notchMicSelect->setSelectedIndexSilently(defaultSourceIndex);
+    } else if (!state.sources.empty()) {
+      instance.notchMicSelect->setSelectedIndexSilently(0);
+    }
+    kLog.debug("NotchSelect: Mic select updated, defaultSourceIndex={}", defaultSourceIndex);
   }
-  kLog.debug("NotchDropdown: populateCustomDeviceDropdowns completed");
 }
 
 // Never calls surface->requestSize() after startup (avoids Wayland configure races).
@@ -4827,29 +4662,28 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
   // Register PipeWire change callback to rebuild device pickers when audio state changes
   if (instance.m_audio) {
     instance.m_audio->setChangeCallback([this, &instance]() {
-      kLog.debug("NotchDropdown: PipeWire change callback fired, isNotchMode={}, volumeOpen={}, micOpen={}",
-                 instance.isNotchMode, instance.notchVolumeDropdownOpen, instance.notchMicDropdownOpen);
+      kLog.debug("NotchSelect: PipeWire change callback fired, isNotchMode={}", instance.isNotchMode);
       try {
         if (instance.isNotchMode && instance.surface) {
-          // Repopulate device dropdowns when devices change
+          // Repopulate device selects when devices change
           const float contentScale = static_cast<float>(instance.barConfig.scale);
-          kLog.debug("NotchDropdown: Repopulating dropdowns due to PipeWire change");
-          populateCustomDeviceDropdowns(instance, contentScale);
+          kLog.debug("NotchSelect: Repopulating selects due to PipeWire change");
+          updateNotchDeviceSelects(instance, contentScale);
           // Update mute button glyphs for new default devices
           updateNotchMuteButtonGlyphs(instance);
           if (auto surface = instance.surface.get(); surface != nullptr) {
-            kLog.debug("NotchDropdown: Requesting layout/redraw/frameTick after repopulation");
+            kLog.debug("NotchSelect: Requesting layout/redraw/frameTick after repopulation");
             surface->requestLayout();
             surface->requestRedraw();
             surface->requestFrameTick();
           }
         } else {
-          kLog.debug("NotchDropdown: Not in notch mode or no surface, skipping repopulation");
+          kLog.debug("NotchSelect: Not in notch mode or no surface, skipping repopulation");
         }
       } catch (const std::exception& e) {
-        kLog.error("NotchDropdown: PipeWire change callback exception: {}", e.what());
+        kLog.error("NotchSelect: PipeWire change callback exception: {}", e.what());
       } catch (...) {
-        kLog.error("NotchDropdown: PipeWire change callback unknown exception");
+        kLog.error("NotchSelect: PipeWire change callback unknown exception");
       }
     });
   }
@@ -5004,30 +4838,55 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
     inst->lastPointerSy = data.localY;
     inst->notchPointerInside = true;
     inst->notchCollapseTimer.stop();
+    kLog.debug("NotchHover: onMotion local=({},{}) clipSize=({},{}) clipPos=({},{})", 
+               data.localX, data.localY, inst->contentClip->width(), inst->contentClip->height(),
+               inst->contentClip->x(), inst->contentClip->y());
   });
   clipArea->setOnEnter([this, inst = &instance](const InputArea::PointerData& data) {
+    kLog.debug("NotchHover: onEnter local=({},{}) clipSize=({},{}) clipPos=({},{}) progress={} animating={}",
+               data.localX, data.localY, inst->contentClip->width(), inst->contentClip->height(),
+               inst->contentClip->x(), inst->contentClip->y(),
+               inst->notchExpandProgress, inst->notchAnimationId != 0);
     inst->notchPointerInside = true;
     inst->notchCollapseTimer.stop();
     if (inst->barConfig.notchHoverExpand && !isFullscreenFocused(inst->output)) {
+      kLog.debug("NotchHover: onEnter -> animateNotchExpand(true)");
       animateNotchExpand(*inst, true);
     }
   });
   clipArea->setOnLeave([this, inst = &instance]() {
-    // Check if pointer is still within contentClip bounds (moved to child widget, not truly left)
-    if (inst->lastPointerSx >= 0.0F && inst->lastPointerSx < inst->contentClip->width() &&
-        inst->lastPointerSy >= 0.0F && inst->lastPointerSy < inst->contentClip->height()) {
-      // Pointer is over a child widget - don't collapse
+    kLog.debug("NotchHover: onLeave local=({},{}) clipSize=({},{}) clipPos=({},{}) progress={} animating={} subMenuOpen={} sliderActive={}",
+               inst->lastPointerSx, inst->lastPointerSy,
+               inst->contentClip->width(), inst->contentClip->height(),
+               inst->contentClip->x(), inst->contentClip->y(),
+               inst->notchExpandProgress, inst->notchAnimationId != 0,
+               inst->notchSubMenuOpen, inst->notchSliderActive);
+    // Check if pointer is still within EXPANDED surface bounds (fixed size, not animated contentClip)
+    // Using maxSurfaceW/maxSurfaceH avoids false leaves during notch expansion animation
+    const float maxSurfaceW = static_cast<float>(inst->maxSurfaceW);
+    const float maxSurfaceH = static_cast<float>(inst->maxSurfaceH);
+    if (inst->lastPointerSx >= 0.0F && inst->lastPointerSx < maxSurfaceW &&
+        inst->lastPointerSy >= 0.0F && inst->lastPointerSy < maxSurfaceH) {
+      kLog.debug("NotchHover: onLeave -> pointer still in expanded surface bounds ({}x{}), ignoring", maxSurfaceW, maxSurfaceH);
       return;
     }
-    // Don't collapse if custom dropdown is open (pointer moved to dropdown inside notch)
-    bool dropdownOpen = inst->notchVolumeDropdownOpen || inst->notchMicDropdownOpen;
-    if (dropdownOpen) {
+    // Don't collapse if Select dropdown is open (pointer moved to dropdown inside notch)
+    bool selectOpen = (inst->notchVolumeSelect && inst->notchVolumeSelect->open()) ||
+                      (inst->notchMicSelect && inst->notchMicSelect->open());
+    if (selectOpen) {
+      kLog.debug("NotchHover: onLeave -> Select dropdown open, ignoring");
       return;
     }
     inst->notchPointerInside = false;
     // Don't collapse if interacting with child widget (button/slider/submenu)
     bool overChildWidget = inst->notchSubMenuOpen || inst->notchSliderActive;
     if (overChildWidget) {
+      kLog.debug("NotchHover: onLeave -> over child widget, ignoring");
+      return;
+    }
+    // Don't collapse if notch is animating (expanding or collapsing)
+    if (inst->notchAnimationId != 0) {
+      kLog.debug("NotchHover: onLeave -> animating, ignoring");
       return;
     }
     if (inst->barConfig.notchCollapseDelayMs > 0) {
@@ -5036,12 +4895,14 @@ void Bar::initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32
           [this, inst]() {
             if (!inst->notchPinned && !inst->notchPointerInside && inst->isNotchMode && inst->notchExpanded &&
                 !inst->notchSliderActive) {
+              kLog.debug("NotchHover: collapse timer fired -> animateNotchExpand(false)");
               animateNotchExpand(*inst, false);
             }
           }
       );
     } else {
       if (!inst->notchPinned && !inst->notchSliderActive) {
+        kLog.debug("NotchHover: onLeave (no delay) -> animateNotchExpand(false)");
         animateNotchExpand(*inst, false);
       }
     }
@@ -6026,78 +5887,6 @@ void Bar::prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool /*need
       instance.notchBrightnessSlider->setValue(brightness * 100.0);
     }
 
-    // Update dropdown visibility based on open state
-    if (instance.notchVolumeDropdown) {
-      instance.notchVolumeDropdown->setVisible(instance.notchVolumeDropdownOpen);
-      kLog.debug("NotchDropdown: prepareNotchFrame sync volume dropdown visible={}", instance.notchVolumeDropdownOpen);
-    }
-    if (instance.notchMicDropdown) {
-      instance.notchMicDropdown->setVisible(instance.notchMicDropdownOpen);
-      kLog.debug("NotchDropdown: prepareNotchFrame sync mic dropdown visible={}", instance.notchMicDropdownOpen);
-    }
-
-    // Sync dropdown overlay visibility and size
-    if (instance.notchVolumeDropdownOverlay) {
-      instance.notchVolumeDropdownOverlay->setVisible(instance.notchVolumeDropdownOpen);
-      if (instance.notchVolumeDropdownOpen && instance.notchVolumeCard) {
-        instance.notchVolumeDropdownOverlay->setSize(instance.notchVolumeCard->width(), instance.notchVolumeCard->height());
-        instance.notchVolumeDropdownOverlay->setPosition(0, 0);
-      }
-    }
-    if (instance.notchMicDropdownOverlay) {
-      instance.notchMicDropdownOverlay->setVisible(instance.notchMicDropdownOpen);
-      if (instance.notchMicDropdownOpen && instance.notchMicCard) {
-        instance.notchMicDropdownOverlay->setSize(instance.notchMicCard->width(), instance.notchMicCard->height());
-        instance.notchMicDropdownOverlay->setPosition(0, 0);
-      }
-    }
-
-    // Position dropdowns absolutely below trigger buttons (overlay style)
-    const float contentScale = static_cast<float>(instance.barConfig.scale);
-    const float dropdownGap = 4.0F * contentScale;
-
-    if (instance.notchVolumeDropdown && instance.notchVolumeDropdownOpen && instance.notchVolumeDeviceSelector) {
-      // Get trigger button position in card coordinates
-      float triggerX = instance.notchVolumeDeviceSelector->x();
-      float triggerY = instance.notchVolumeDeviceSelector->y();
-      float triggerW = instance.notchVolumeDeviceSelector->width();
-      float triggerH = instance.notchVolumeDeviceSelector->height();
-
-      // Position dropdown below trigger, aligned to right edge of trigger
-      // The dropdown is a child of notchVolumeCard, so use card-relative coordinates
-      float dropdownX = triggerX + triggerW - instance.notchVolumeDropdown->width();
-      float dropdownY = triggerY + triggerH + dropdownGap;
-
-      // Clamp to card bounds
-      float cardW = instance.notchVolumeCard->width();
-      if (dropdownX < 0) dropdownX = 0;
-      if (dropdownX + instance.notchVolumeDropdown->width() > cardW) {
-        dropdownX = cardW - instance.notchVolumeDropdown->width();
-      }
-
-      instance.notchVolumeDropdown->setPosition(dropdownX, dropdownY);
-      kLog.debug("NotchDropdown: Positioned volume dropdown at ({}, {}), trigger=({},{}), cardW={}", dropdownX, dropdownY, triggerX, triggerY, cardW);
-    }
-
-    if (instance.notchMicDropdown && instance.notchMicDropdownOpen && instance.notchMicDeviceSelector) {
-      float triggerX = instance.notchMicDeviceSelector->x();
-      float triggerY = instance.notchMicDeviceSelector->y();
-      float triggerW = instance.notchMicDeviceSelector->width();
-      float triggerH = instance.notchMicDeviceSelector->height();
-
-      float dropdownX = triggerX + triggerW - instance.notchMicDropdown->width();
-      float dropdownY = triggerY + triggerH + dropdownGap;
-
-      float cardW = instance.notchMicCard->width();
-      if (dropdownX < 0) dropdownX = 0;
-      if (dropdownX + instance.notchMicDropdown->width() > cardW) {
-        dropdownX = cardW - instance.notchMicDropdown->width();
-      }
-
-      instance.notchMicDropdown->setPosition(dropdownX, dropdownY);
-      kLog.debug("NotchDropdown: Positioned mic dropdown at ({}, {}), trigger=({},{}), cardW={}", dropdownX, dropdownY, triggerX, triggerY, cardW);
-    }
-
     // Update notch geometry every frame while the scene exists. The expanded Bento
     // layout depends on the animated notchExpandProgress, which changes during
     // expand/collapse animations and audio/brightness polling. Without this, the
@@ -6305,16 +6094,40 @@ m_hoveredInstance = nullptr;
         targetInstance->notchCollapseTimer.start(
             std::chrono::milliseconds(targetInstance->barConfig.notchCollapseDelayMs),
             [this, targetInstance]() {
+              // Don't collapse if animating (expanding/collapsing)
+              if (targetInstance->notchAnimationId != 0) {
+                kLog.debug("NotchHover: global Leave timer fired but animating, ignoring");
+                return;
+              }
+              // Don't collapse if Select dropdown is open (pointer moved to dropdown)
+              bool selectOpen = (targetInstance->notchVolumeSelect && targetInstance->notchVolumeSelect->open()) ||
+                                (targetInstance->notchMicSelect && targetInstance->notchMicSelect->open());
+              if (selectOpen) {
+                kLog.debug("NotchHover: global Leave timer fired but Select dropdown open, ignoring");
+                return;
+              }
               if (!targetInstance->notchPinned && !targetInstance->pointerInside && targetInstance->isNotchMode && targetInstance->notchExpanded &&
                   !targetInstance->notchSliderActive) {
+                kLog.debug("NotchHover: global Leave timer fired -> animateNotchExpand(false)");
                 animateNotchExpand(*targetInstance, false);
               }
             }
         );
       } else {
-        if (!targetInstance->notchPinned && !targetInstance->pointerInside && targetInstance->isNotchMode && targetInstance->notchExpanded &&
-            !targetInstance->notchSliderActive) {
-          animateNotchExpand(*targetInstance, false);
+        // Don't collapse if animating
+        if (targetInstance->notchAnimationId != 0) {
+          kLog.debug("NotchHover: global Leave (no delay) but animating, ignoring");
+        } else {
+          // Don't collapse if Select dropdown is open (pointer moved to dropdown)
+          bool selectOpen = (targetInstance->notchVolumeSelect && targetInstance->notchVolumeSelect->open()) ||
+                            (targetInstance->notchMicSelect && targetInstance->notchMicSelect->open());
+          if (selectOpen) {
+            kLog.debug("NotchHover: global Leave (no delay) but Select dropdown open, ignoring");
+          } else if (!targetInstance->notchPinned && !targetInstance->pointerInside && targetInstance->isNotchMode && targetInstance->notchExpanded &&
+              !targetInstance->notchSliderActive) {
+            kLog.debug("NotchHover: global Leave (no delay) -> animateNotchExpand(false)");
+            animateNotchExpand(*targetInstance, false);
+          }
         }
       }
     }
