@@ -2650,6 +2650,8 @@ auto surfaceConfig = LayerSurfaceConfig{
   // Input region tracks the animated pill bounds every frame.
   if (isNotchMode) {
     // Input region will be set in initNotchScene after first frame
+    // Request initial frame tick to start receiving pointer events
+    inst->surface->requestFrameTick();
   }
 
   m_surfaceMap[instance->surface->wlSurface()] = instance.get();
@@ -5244,6 +5246,7 @@ void Bar::layoutNotchWidgets(BarInstance& instance, Renderer& renderer, [[maybe_
     }
     if (instance.notchCollapsedContainer != nullptr) {
       instance.notchCollapsedContainer->setVisible(false);
+      instance.notchCollapsedContainer->setOpacity(0.0F);
     }
 
     // Position and size header bar (full pill width, 36px height at y=12px)
@@ -5272,8 +5275,8 @@ void Bar::layoutNotchWidgets(BarInstance& instance, Renderer& renderer, [[maybe_
       instance.notchBentoRoot->setOpacity(0.0F);
     }
     if (instance.notchCollapsedContainer != nullptr) {
-      instance.notchCollapsedContainer->setVisible(collapsedOpacity > 0.0F);
-      instance.notchCollapsedContainer->setOpacity(collapsedOpacity);
+      instance.notchCollapsedContainer->setVisible(true);
+      instance.notchCollapsedContainer->setOpacity(1.0F);
     }
   }
 }
@@ -5558,8 +5561,9 @@ void Bar::prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool /*need
   [[maybe_unused]] const float maxW = std::min(notchW, static_cast<float>(instance.outputLogicalWidth - 32));
   [[maybe_unused]] const float maxH = std::min(notchH, static_cast<float>(instance.outputLogicalHeight) * 0.45F);
 
-  // Request frame tick during animation or when visualizer is playing
-  if (instance.surface != nullptr && (instance.notchAnimationId != 0 || instance.notchMediaPlaying)) {
+  // Request frame tick in notch mode to keep surface alive and receiving pointer events.
+  // This is necessary for Wayland surfaces to continue receiving enter/leave/motion events.
+  if (instance.surface != nullptr) {
     instance.surface->requestFrameTick();
   }
 
@@ -6483,9 +6487,8 @@ instance.notchAnimationId = instance.animations.animate(
           const float maxH = std::min(notchH, static_cast<float>(instance.outputLogicalHeight) * 0.45F);
           instance.surface->requestSize(static_cast<std::uint32_t>(maxW), static_cast<std::uint32_t>(maxH));
           
-          // Update exclusiveZone dynamically (0 when collapsed, thickness when expanded)
-          const std::uint32_t exclusiveZone = progress > 0.5F ? static_cast<std::uint32_t>(instance.barConfig.thickness) : 0;
-          instance.surface->setExclusiveZone(exclusiveZone);
+          // Keep exclusiveZone = thickness for notch mode so surface receives pointer events even during animation
+          instance.surface->setExclusiveZone(static_cast<std::uint32_t>(instance.barConfig.thickness));
         }
         // Update input region every frame to match exact pill rect
         if (instance.surface != nullptr) {
@@ -6502,6 +6505,10 @@ instance.notchAnimationId = instance.animations.animate(
       [this, &instance, expand]() {
         instance.notchAnimationId = 0;
         instance.notchExpanded = expand;
+        // Reset pointer inside state on collapse completion to allow re-expand
+        if (!expand) {
+          instance.notchPointerInside = false;
+        }
         // Final input region update
         if (instance.surface != nullptr) {
           const NotchDimensions dims = computeNotchDimensions(instance, expand ? 1.0F : 0.0F);
@@ -6514,8 +6521,9 @@ instance.notchAnimationId = instance.animations.animate(
           updateNotchInputRegion(instance, pillX, pillY, maxW, maxH);
           
           // Set final surface size and exclusiveZone
+          // Keep exclusiveZone = thickness for notch mode so surface receives pointer events even when collapsed
           instance.surface->requestSize(static_cast<std::uint32_t>(maxW), static_cast<std::uint32_t>(maxH));
-          instance.surface->setExclusiveZone(expand ? static_cast<std::uint32_t>(instance.barConfig.thickness) : 0);
+          instance.surface->setExclusiveZone(static_cast<std::uint32_t>(instance.barConfig.thickness));
         }
         // Start auto-collapse timer if expanded and not hovered and not pinned
         if (expand && !instance.notchPinned && !instance.notchPointerInside && instance.barConfig.notchAutoCollapseTimeoutMs > 0) {
