@@ -1,128 +1,120 @@
-# Plan: Replace Custom Dropdown with Built-in Select Control for Notch Device Selectors
+# Plan: Fix Dynamic Notch Dropdown Issues
 
-## Issue
-The current custom dropdown implementation for notch device selectors (speaker/mic) has issues:
-1. Dropdown not visible (clipped by contentClip)
-2. Complex positioning logic with absolute coordinates
-3. Click-outside handling with overlays
-4. Real-time icon updates needed
+## Issues Reported
+1. **Dropdown won't dismiss** - Clicking outside or pressing Escape doesn't close the dropdown; only selecting an item closes it
+2. **Notch disappears after selection** - After selecting a device, the notch collapses and can't be accessed again
+3. **Device labels don't update in real-time** - The speaker/mic labels between dropdown and icon don't update immediately when selection changes
+4. **Notch should persist** - After expand/collapse cycles, the notch should remain accessible
 
-The codebase already has a complete `Select` control with built-in dropdown popup (`SelectDropdownPopup`) that handles all of this automatically.
+## Root Cause Analysis
 
-## Solution: Use Built-in Select Control
-Replace the custom dropdown Flex + overlay implementation with the standard `ui::select()` control for both volume and mic device selectors.
+### Issue 1: Dropdown Won't Dismiss
+The `SelectDropdownPopup` is a Wayland popup surface. When clicking outside the popup, the Wayland compositor should dismiss it and call `onDismiss`. However, the popup might not be properly handling outside clicks, or the `onDismiss` callback might not be firing.
 
-## Current Custom Implementation (to be removed)
-- `notchVolumeDropdown` / `notchMicDropdown` (Flex with buttons)
-- `notchVolumeDropdownOverlay` / `notchMicDropdownOverlay` (InputArea for click-outside)
-- Complex positioning in `prepareNotchFrame` using `Node::absolutePosition`
-- Manual visibility toggling
-- Manual glyph updates on selection
+### Issue 2: Notch Disappears After Selection
+Sequence:
+1. User clicks dropdown item → `onSelect` fires → sets default device → calls `updateNotchMuteButtonGlyphs`
+2. Dropdown closes → `onDismiss` fires → sets `notchDropdownOpen = false`
+3. Pointer is now outside the notch surface (dropdown was a separate Wayland surface)
+4. `contentClip` Leave event fires → starts collapse timer
+5. Collapse timer fires → `animateNotchExpand(false)` → notch collapses
+6. User can't access notch again because it's collapsed
 
-## New Implementation Using Select Control
-```cpp
-// In the header row where chevron trigger currently is:
-instance.notchVolumeSelect = static_cast<Select*>(volumeHeader->addChild(
-    ui::select({
-        .options = deviceLabels,  // Vector of sink labels
-        .selectedIndex = defaultSinkIndex,
-        .placeholder = "Select output device",
-        .triggerGlyph = "chevron-down",
-        .onSelectionChanged = [&](size_t index, string_view label) {
-            // Set default sink
-            instance.m_audio->setDefaultSink(deviceIds[index]);
-            // Update mute button glyph
-            updateVolumeMuteButtonGlyph(instance);
-        },
-        .configure = [](Select& s) { s.setFixedWidth(120 * scale); }
-    })
-));
-```
+The fix in `animateNotchExpand` closes the dropdown before collapse (line 6402), but the issue is the Leave event happens BEFORE the dropdown closes.
+
+### Issue 3: Labels Don't Update in Real-Time
+The `onSelect` callback calls `updateNotchMuteButtonGlyphs()` but doesn't update `notchVolumeSinkLabel` and `notchMicSourceLabel`. These are only updated in `prepareNotchFrame` which runs per-frame, but the notch collapses before the next frame.
+
+### Issue 4: Notch Persistence
+The auto-collapse timer (line 6474) starts after expansion completes. If the notch collapses and user tries to hover again, it should re-expand. But there might be a state issue.
 
 ## Implementation Plan
 
-### Task 1: Add Select Pointers to BarInstance
-**File**: `src/shell/bar/bar_instance.h`
-- Add `Select* notchVolumeSelect = nullptr;`
-- Add `Select* notchMicSelect = nullptr;`
+### Task 1: Fix Dropdown Dismissal
+**File**: `src/shell/bar/bar.cpp` - `showDeviceDropdown`
+- Verify `SelectDropdownPopup` properly dismisses on outside click/Escape
+- The `onDismiss` callback should fire when clicking outside
 
-### Task 2: Create Select Controls in initNotchScene
-**File**: `src/shell/bar/bar.cpp` (in `initNotchScene` where header row is built)
-- Replace chevron trigger button with `ui::select()` for volume
-- Replace chevron trigger button with `ui::select()` for mic
-- Set options from current audio state
-- Set selectedIndex to current default device
-- Add onSelectionChanged callback to set default device and update glyph
+### Task 2: Prevent Notch Collapse After Selection
+**File**: `src/shell/bar/bar.cpp` - `showDeviceDropdown` `onSelect` callback
+- After setting default device, set `instance.notchPointerInside = true` to prevent immediate collapse
+- Stop the collapse timer: `instance.notchCollapseTimer.stop()`
+- Update device name labels immediately in the callback
 
-### Task 3: Add Helper to Populate Select Options
-**File**: `src/shell/bar/bar.cpp`
-- Create `updateNotchDeviceSelects(BarInstance&)` function
-- Called from:
-  - Initial population after `buildNotchBentoLayout`
-  - PipeWire change callback (when devices change)
-  - After device selection (to refresh list if needed)
+### Task 3: Update Device Labels in Real-Time
+**File**: `src/shell/bar/bar.cpp` - `showDeviceDropdown` `onSelect` callback
+- Call a helper to update `notchVolumeSinkLabel` and `notchMicSourceLabel` immediately after selection
+- Reuse the same logic from `prepareNotchFrame`
 
-### Task 4: Update Mute Button Glyph on Selection
-**File**: `src/shell/bar/bar.cpp`
-- In onSelectionChanged callback, update mute button glyph for new default device
-- Also called from `updateNotchMuteButtonGlyphs()` for PipeWire changes
+### Task 4: Ensure Notch Re-expands on Hover
+**File**: `src/shell/bar/bar.cpp` - `Bar::onPointerEvent` Enter handler
+- Verify hover re-expansion works after collapse
+- Check that `notchExpanded` state is properly reset
 
-### Task 5: Remove Custom Dropdown Code
-**File**: `src/shell/bar/bar.cpp`
-- Remove `notchVolumeDropdown`, `notchMicDropdown` creation
-- Remove `notchVolumeDropdownOverlay`, `notchMicDropdownOverlay` creation
-- Remove positioning logic in `prepareNotchFrame`
-- Remove overlay sync logic in `prepareNotchFrame`
-- Remove from BarInstance struct
+### Task 5: Build and Test
+- Build: `ninja -C build -j4`
+- Test all scenarios
 
-### Task 6: Clean Up BarInstance
-**File**: `src/shell/bar/bar_instance.h`
-- Remove: `notchVolumeDropdown`, `notchMicDropdown`
-- Remove: `notchVolumeDropdownOverlay`, `notchMicDropdownOverlay`
-- Remove: `notchVolumeDropdownOpen`, `notchMicDropdownOpen`
-- Add: `notchVolumeSelect`, `notchMicSelect`
+## Code Changes
 
-### Task 7: Fix Notch Collapse When Select Dropdown Open
-**File**: `src/shell/bar/bar.cpp`
-- In `contentClip` onLeave handler (already has check at line ~4874) - verify it works
-- In `Bar::onPointerEvent` global Leave handler (line ~6090-6118) - ADD check for Select dropdown open
-- Use `notchVolumeSelect->open()` and `notchMicSelect->open()` to prevent collapse
-- Also add `onDropdownStateChange` callback to track dropdown state if needed
+### In `showDeviceDropdown` onSelect callback:
+```cpp
+callbacks.onSelect = [&instance, isVolume](std::size_t index) {
+    kLog.debug("NotchSelect: Dropdown selection index={}, isVolume={}", index, isVolume);
+    if (!instance.m_audio) return;
+    auto& state = instance.m_audio->state();
+    const auto& devices = isVolume ? state.sinks : state.sources;
+    if (index < devices.size()) {
+      if (isVolume) {
+        instance.m_audio->setDefaultSink(devices[index].id);
+        kLog.debug("NotchSelect: Set default sink to {}", devices[index].id);
+      } else {
+        instance.m_audio->setDefaultSource(devices[index].id);
+        kLog.debug("NotchSelect: Set default source to {}", devices[index].id);
+      }
+      // Update mute button glyph for new default device
+      updateNotchMuteButtonGlyphs(instance);
+      
+      // NEW: Update device name labels immediately
+      updateNotchDeviceLabels(instance);
+      
+      // NEW: Prevent notch collapse by stopping timer and marking pointer inside
+      instance.notchCollapseTimer.stop();
+      instance.notchPointerInside = true;
+    }
+  };
+```
 
-### Task 8: Prevent Notch Disappearing After Selection
-**File**: `src/shell/bar/bar.cpp`
-- After selection in onSelectionChanged, the dropdown closes
-- Ensure notch doesn't collapse immediately after selection
-- The existing check for `selectOpen` should handle this if the dropdown state is tracked correctly
+### New helper function `updateNotchDeviceLabels`:
+```cpp
+void updateNotchDeviceLabels(BarInstance& instance) {
+  if (!instance.m_audio) return;
+  auto& state = instance.m_audio->state();
+  
+  if (instance.notchVolumeSinkLabel) {
+    const AudioNode* sink = [&state]() -> const AudioNode* {
+      for (const auto& s : state.sinks) if (s.id == state.defaultSinkId) return &s;
+      return state.sinks.empty() ? nullptr : &state.sinks[0];
+    }();
+    if (sink) instance.notchVolumeSinkLabel->setText(audioDeviceLabel(*sink));
+  }
+  
+  if (instance.notchMicSourceLabel) {
+    const AudioNode* source = [&state]() -> const AudioNode* {
+      for (const auto& s : state.sources) if (s.id == state.defaultSourceId) return &s;
+      return state.sources.empty() ? nullptr : &state.sources[0];
+    }();
+    if (source) instance.notchMicSourceLabel->setText(audioDeviceLabel(*source));
+  }
+}
+```
 
-## Benefits of Using Select Control
-1. **Built-in dropdown popup** - Uses `SelectDropdownPopup` (Wayland popup, properly layered)
-2. **Proper clipping** - Popup is a separate Wayland surface, not clipped by contentClip
-3. **Keyboard navigation** - Arrow keys, Enter, Escape work automatically
-4. **Click-outside** - Handled by popup internally
-5. **Consistent styling** - Matches other selects in settings/control center
-6. **Less code** - ~200 lines removed, ~50 lines added
-
-## Validation
-1. Build: `ninja -C build -j4`
-2. Run: `./build/noctalia`
-3. Open Dynamic Notch expanded view
-4. Click speaker select - dropdown should open and be visible
-5. Hover over dropdown options - notch should STAY EXPANDED (not collapse)
-6. Select different sink - should update default sink and mute button glyph
-7. Notch should NOT disappear after selection
-8. Click mic select - same behavior
-9. Change default device in pavucontrol - select should update
-10. Keyboard navigation - arrow keys, Enter, Escape should work
-
-## Risk Mitigation
-- Keep all debug logging during transition
-- Test with various device counts (0, 1, many)
-- Ensure SelectDropdownPopup parent is set correctly (already done for settings window)
-- The Select control creates its own popup surface via SelectDropdownPopup
-
-## Open Questions
-1. **Select width**: Should it be fixed width or fill available space? The trigger button currently is 28px. The Select trigger will show the selected device name.
-2. **Placeholder vs current selection**: Should show current device name when selected, placeholder when none.
-3. **Trigger glyph**: Currently chevron-down. Select supports custom trigger glyph.
-4. **Max dropdown height**: SelectDropdownPopup may need max height constraint for many devices.
+## Validation Steps
+1. Build passes
+2. Open Dynamic Notch expanded view
+3. Click speaker/mic chevron - dropdown opens
+4. Click outside dropdown - dropdown closes (doesn't require selection)
+5. Select different device - labels update immediately, notch stays expanded
+6. Move mouse away - notch collapses after delay
+7. Hover again - notch re-expands
+8. Repeat - notch remains accessible
