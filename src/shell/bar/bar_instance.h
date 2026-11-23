@@ -173,6 +173,9 @@ struct BarInstance {
   bool notchSliderActive = false;             // True while any slider is being dragged
   bool notchSubMenuOpen = false;              // True while a sub-tab/menu inside card is active
 
+  enum class NotchDropdownTarget { None, Volume, Mic };
+  NotchDropdownTarget notchDropdownTarget = NotchDropdownTarget::None;
+
   // Collapsed pill custom elements (album art + visualizer)
   Node* notchCollapsedContainer = nullptr;    // Container for collapsed-pill elements
   Image* notchAlbumArt = nullptr;             // Album art thumbnail (20x20, radius 5)

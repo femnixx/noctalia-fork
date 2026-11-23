@@ -4099,7 +4099,14 @@ auto mainContent = instance.notchBentoRoot->addChild(
           .radius = 8.0F * contentScale,
           .width = 28.0F * contentScale,
           .height = 28.0F * contentScale,
-          .onClick = [&instance]() { showDeviceDropdown(instance, true); },
+          .onClick = [&instance]() {
+            if (instance.selectDropdownPopup && instance.selectDropdownPopup->isSelectDropdownOpen() &&
+                instance.notchDropdownTarget == BarInstance::NotchDropdownTarget::Volume) {
+              instance.selectDropdownPopup->closeSelectDropdown();
+            } else {
+              showDeviceDropdown(instance, true);
+            }
+          },
       })
   ));
 
@@ -4256,7 +4263,14 @@ auto mainContent = instance.notchBentoRoot->addChild(
           .radius = 8.0F * contentScale,
           .width = 28.0F * contentScale,
           .height = 28.0F * contentScale,
-          .onClick = [&instance]() { showDeviceDropdown(instance, false); },
+          .onClick = [&instance]() {
+            if (instance.selectDropdownPopup && instance.selectDropdownPopup->isSelectDropdownOpen() &&
+                instance.notchDropdownTarget == BarInstance::NotchDropdownTarget::Mic) {
+              instance.selectDropdownPopup->closeSelectDropdown();
+            } else {
+              showDeviceDropdown(instance, false);
+            }
+          },
       })
   ));
 
@@ -4666,10 +4680,12 @@ void showDeviceDropdown(BarInstance& instance, bool isVolume) {
   callbacks.onDismiss = [&instance]() {
     kLog.debug("NotchSelect: Dropdown dismissed");
     instance.notchDropdownOpen = false;
+    instance.notchDropdownTarget = BarInstance::NotchDropdownTarget::None;
   };
-  callbacks.onOpen = [&instance]() {
+  callbacks.onOpen = [&instance, isVolume]() {
     kLog.debug("NotchSelect: Dropdown opened");
     instance.notchDropdownOpen = true;
+    instance.notchDropdownTarget = isVolume ? BarInstance::NotchDropdownTarget::Volume : BarInstance::NotchDropdownTarget::Mic;
   };
 
   instance.selectDropdownPopup->openSelectDropdown(request, callbacks);
@@ -6431,6 +6447,7 @@ void Bar::animateNotchExpand(BarInstance& instance, bool expand) {
   // Close any open dropdown before starting collapse animation to prevent orphaned popups
   if (!expand && instance.selectDropdownPopup) {
     instance.selectDropdownPopup->closeSelectDropdown();
+    instance.notchDropdownTarget = BarInstance::NotchDropdownTarget::None;
   }
 
   const float from = instance.notchExpandProgress;
