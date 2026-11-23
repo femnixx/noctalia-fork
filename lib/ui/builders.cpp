@@ -588,6 +588,9 @@ namespace ui {
     if (props.onSelectionChanged) {
       control->setOnSelectionChanged(std::move(props.onSelectionChanged));
     }
+    if (props.onDropdownStateChange) {
+      control->setOnDropdownStateChange(std::move(props.onDropdownStateChange));
+    }
     applyNodeProps(*control, props);
     if (props.configure) {
       props.configure(*control);

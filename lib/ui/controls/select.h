@@ -40,8 +40,9 @@ public:
   void setColorSwatchPreviews(std::vector<ColorSwatchPreview> previews);
 void setNotifyOnReselect(bool enabled);
   void setShowSelectedText(bool show);
+void setOnSelectionChanged(std::function<void(std::size_t, std::string_view)> callback);
+  void setOnDropdownStateChange(std::function<void(bool)> callback);
 
-  void setOnSelectionChanged(std::function<void(std::size_t, std::string_view)> callback);
   std::size_t selectedIndex() const noexcept { return m_selectedIndex; }
   std::string_view selectedText() const noexcept;
   bool enabled() const noexcept { return m_enabled; }
@@ -91,4 +92,5 @@ private:
   Signal<>::ScopedConnection m_inputBordersConn;
 
   std::function<void(std::size_t, std::string_view)> m_onSelectionChanged;
+  std::function<void(bool)> m_onDropdownStateChange;
 };

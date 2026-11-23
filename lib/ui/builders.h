@@ -311,6 +311,7 @@ namespace ui {
     std::optional<bool> visible = std::nullopt;
     std::optional<bool> participatesInLayout = std::nullopt;
     std::function<void(std::size_t, std::string_view)> onSelectionChanged = nullptr;
+    std::function<void(bool)> onDropdownStateChange = nullptr;
     std::function<void(Select&)> configure = nullptr;
   };
 

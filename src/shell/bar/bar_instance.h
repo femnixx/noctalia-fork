@@ -246,6 +246,14 @@ struct BarInstance {
   class Select* notchMicDevicePicker = nullptr;
   bool notchMicPickerOpen = false;
   std::unique_ptr<SelectDropdownPopup> selectDropdownPopup;
+  bool notchDropdownOpen = false;
+  // Custom in-notch dropdowns (replacing SelectDropdownPopup)
+  Flex* notchVolumeDropdown = nullptr;
+  Flex* notchMicDropdown = nullptr;
+  InputArea* notchVolumeDropdownOverlay = nullptr;
+  InputArea* notchMicDropdownOverlay = nullptr;
+  bool notchVolumeDropdownOpen = false;
+  bool notchMicDropdownOpen = false;
   Slider* notchBrightnessSlider = nullptr;
   Label* notchBrightnessLabel = nullptr;
   // Column 4 (~20%): 2x2 Quick Toggle Tiles (Wi-Fi, Bluetooth, DND, Caffeine)

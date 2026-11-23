@@ -241,6 +241,10 @@ void Select::setOnSelectionChanged(std::function<void(std::size_t, std::string_v
   m_onSelectionChanged = std::move(callback);
 }
 
+void Select::setOnDropdownStateChange(std::function<void(bool)> callback) {
+  m_onDropdownStateChange = std::move(callback);
+}
+
 std::string_view Select::selectedText() const noexcept {
   if (m_selectedIndex >= m_options.size()) {
     return {};
@@ -319,9 +323,15 @@ void Select::doLayout(Renderer& renderer) {
   float triggerGlyphY = std::round((m_controlHeight - m_triggerGlyph->height()) * 0.5F);
   const float triggerLabelX =
       Style::rtl() ? dropdownWidth - triggerLabelLeft - m_triggerLabel->width() : triggerLabelLeft;
+
+  // Center glyph horizontally when label is not shown (showSelectedText = false)
+  float triggerGlyphX;
+  if (!m_showSelectedText) {
+    triggerGlyphX = std::round((dropdownWidth - m_triggerGlyph->width()) * 0.5F);
+  } else {
+    triggerGlyphX = Style::rtl() ? m_horizontalPadding : dropdownWidth - m_horizontalPadding - m_triggerGlyph->width();
+  }
   m_triggerLabel->setPosition(triggerLabelX, triggerLabelY);
-  const float triggerGlyphX =
-      Style::rtl() ? m_horizontalPadding : dropdownWidth - m_horizontalPadding - m_triggerGlyph->width();
   m_triggerGlyph->setPosition(triggerGlyphX, triggerGlyphY);
   m_triggerArea->setPosition(0.0F, 0.0F);
   m_triggerArea->setFrameSize(dropdownWidth, m_controlHeight);
@@ -496,10 +506,10 @@ void Select::openPopupDropdown() {
           [this] {
             m_open = false;
             animateCaret(false);
+            if (m_onDropdownStateChange) m_onDropdownStateChange(false);
           },
+      .onOpen = [this] { m_open = true; animateCaret(true); if (m_onDropdownStateChange) m_onDropdownStateChange(true); },
   };
 
-  m_open = true;
-  animateCaret(true);
   ctx->openSelectDropdown(request, std::move(callbacks));
 }

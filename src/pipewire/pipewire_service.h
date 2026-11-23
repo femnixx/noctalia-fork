@@ -335,6 +335,7 @@ private:
   VolumePreviewCallback m_volumePreviewCallback;
   WirePlumberMixer* m_wpMixer = nullptr;
   std::uint64_t m_changeSerial = 0;
+  bool m_inRebuildState = false;
 
   void emitChanged();
 };

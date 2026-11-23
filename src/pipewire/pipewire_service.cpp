@@ -1823,8 +1823,11 @@ void PipeWireService::parseDefaultNodes(const spa_dict* props) {
 }
 
 void PipeWireService::onMixerVolumeChanged(std::uint32_t id, float volume, bool muted) {
+  kLog.debug("onMixerVolumeChanged: id={} volume={} muted={}", id, volume, muted);
+
   const auto it = m_nodes.find(id);
   if (it == m_nodes.end()) {
+    kLog.warn("onMixerVolumeChanged: node {} not found", id);
     return;
   }
   auto& nd = *it->second;
@@ -1845,11 +1848,16 @@ void PipeWireService::onMixerVolumeChanged(std::uint32_t id, float volume, bool 
   const bool before = nd.muted;
   recomputeEffectiveMute(nd);
   if (changed || before != nd.muted) {
+    kLog.debug("onMixerVolumeChanged: state changed for id={}, rebuilding", id);
     rebuildState();
+  } else {
+    kLog.debug("onMixerVolumeChanged: no state change for id={}", id);
   }
 }
 
 void PipeWireService::onTargetObjectMetadata(std::uint32_t subject, const std::string& target) {
+  kLog.debug("onTargetObjectMetadata: subject={} target='{}'", subject, target);
+
   if (target.empty()) {
     if (m_metadataTargetObjects.erase(subject) == 0) {
       return;
@@ -1920,6 +1928,14 @@ void PipeWireService::refreshNodeIdentity(NodeData& nd) {
 }
 
 void PipeWireService::rebuildState() {
+  if (m_inRebuildState) {
+    kLog.debug("PipeWireService: rebuildState() - already in rebuild, skipping to prevent reentrancy");
+    return;
+  }
+
+  m_inRebuildState = true;
+  kLog.debug("PipeWireService: rebuildState() - starting");
+
   AudioState next;
   PrivacyState nextPrivacy;
 
@@ -2063,13 +2079,18 @@ void PipeWireService::rebuildState() {
   });
 
   if (next == m_state && nextPrivacy == m_privacyState) {
+    kLog.debug("PipeWireService: rebuildState() - no state change, skipping emitChanged");
+    m_inRebuildState = false;
     return;
   }
 
+  kLog.debug("PipeWireService: rebuildState() - state changed, emitting changed signal");
   m_state = std::move(next);
   m_privacyState = std::move(nextPrivacy);
   ++m_changeSerial;
   emitChanged();
+
+  m_inRebuildState = false;
 }
 
 std::uint32_t PipeWireService::resolveTargetObjectSink(const std::string& target) const {
@@ -2240,12 +2261,16 @@ float PipeWireService::relativeAdjustTarget(
 }
 
 void PipeWireService::setNodeVolume(std::uint32_t id, float volume) {
+  kLog.debug("setNodeVolume: id={} volume={}", id, volume);
+
   auto it = m_nodes.find(id);
   if (it == m_nodes.end()) {
+    kLog.warn("setNodeVolume: node {} not found", id);
     return;
   }
 
   if (it->second->proxy == nullptr) {
+    kLog.warn("setNodeVolume: node {} proxy is null", id);
     return;
   }
 
@@ -2259,16 +2284,21 @@ void PipeWireService::setNodeVolume(std::uint32_t id, float volume) {
   if (applyNodeVolume(id, clamped)) {
     rebuildState();
   }
+  kLog.debug("setNodeVolume: completed for node id={}", id);
 }
 
 void PipeWireService::setNodeMuted(std::uint32_t id, bool muted) {
+  kLog.debug("setNodeMuted: id={} muted={}", id, muted);
+
   auto it = m_nodes.find(id);
   if (it == m_nodes.end()) {
+    kLog.warn("setNodeMuted: node {} not found", id);
     return;
   }
 
   auto& nd = *it->second;
   if (nd.proxy == nullptr) {
+    kLog.warn("setNodeMuted: node {} proxy is null", id);
     return;
   }
 
@@ -2277,30 +2307,48 @@ void PipeWireService::setNodeMuted(std::uint32_t id, bool muted) {
   // SPA_PROP_mute that mixer-api writes, so they also need SPA_PROP_monitorMute to stop capture.
   const bool isDeviceNode = nd.mediaClass == "Audio/Sink" || nd.mediaClass == "Audio/Source";
   const bool isRoutelessSource = nd.mediaClass == "Audio/Source" && !nd.hasRoute;
-  if (isDeviceNode && m_wpMixer != nullptr) {
-    m_wpMixer->setMuted(id, muted);
-    if (isRoutelessSource) {
-      std::uint8_t monitorBuffer[128];
-      spa_pod_builder monitorBuilder;
-      spa_pod_builder_init(&monitorBuilder, monitorBuffer, sizeof(monitorBuffer));
-      auto* monitorPod = static_cast<spa_pod*>(spa_pod_builder_add_object(
-          &monitorBuilder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props, SPA_PROP_monitorMute, SPA_POD_Bool(muted)
-      ));
-      pw_node_set_param(nd.proxy, SPA_PARAM_Props, 0, monitorPod);
-      nd.monitorMute = muted;
-    }
-    const bool before = nd.muted;
-    nd.swMute = muted;
-    recomputeEffectiveMute(nd);
-    if (before != nd.muted) {
-      if (id == m_state.defaultSinkId && m_state.defaultSinkId != 0) {
-        emitVolumePreview(false, id, nd.volume);
-      } else if (id == m_state.defaultSourceId && m_state.defaultSourceId != 0) {
-        emitVolumePreview(true, id, nd.volume);
+
+  if (isDeviceNode) {
+    if (m_wpMixer != nullptr) {
+      try {
+        m_wpMixer->setMuted(id, muted);
+        kLog.debug("setNodeMuted: WirePlumber setMuted called for id={}", id);
+      } catch (const std::exception& e) {
+        kLog.error("setNodeMuted: WirePlumber setMuted threw for id={}: {}", id, e.what());
+      } catch (...) {
+        kLog.error("setNodeMuted: WirePlumber setMuted threw unknown exception for id={}", id);
       }
-      rebuildState();
+
+      if (isRoutelessSource) {
+        std::uint8_t monitorBuffer[128];
+        spa_pod_builder monitorBuilder;
+        spa_pod_builder_init(&monitorBuilder, monitorBuffer, sizeof(monitorBuffer));
+        auto* monitorPod = static_cast<spa_pod*>(spa_pod_builder_add_object(
+            &monitorBuilder, SPA_TYPE_OBJECT_Props, SPA_PARAM_Props, SPA_PROP_monitorMute, SPA_POD_Bool(muted)
+        ));
+        if (monitorPod != nullptr) {
+          pw_node_set_param(nd.proxy, SPA_PARAM_Props, 0, monitorPod);
+          nd.monitorMute = muted;
+        } else {
+          kLog.warn("setNodeMuted: failed to build monitorMute pod for id={}", id);
+        }
+      }
+      const bool before = nd.muted;
+      nd.swMute = muted;
+      recomputeEffectiveMute(nd);
+      if (before != nd.muted) {
+        if (id == m_state.defaultSinkId && m_state.defaultSinkId != 0) {
+          emitVolumePreview(false, id, nd.volume);
+        } else if (id == m_state.defaultSourceId && m_state.defaultSourceId != 0) {
+          emitVolumePreview(true, id, nd.volume);
+        }
+        rebuildState();
+      }
+      kLog.debug("setNodeMuted: completed for device node id={}", id);
+      return;
+    } else {
+      kLog.warn("setNodeMuted: WirePlumber mixer unavailable for device node id={}, falling back to direct node params", id);
     }
-    return;
   }
 
   // Program streams, and device nodes for immediate local/UI consistency.
@@ -2326,7 +2374,11 @@ void PipeWireService::setNodeMuted(std::uint32_t id, bool muted) {
     spa_pod_builder_prop(&routeBuilder, SPA_PARAM_ROUTE_save, 0);
     spa_pod_builder_bool(&routeBuilder, true);
     auto* routePod = static_cast<spa_pod*>(spa_pod_builder_pop(&routeBuilder, &routeFrame));
-    pw_node_set_param(nd.proxy, SPA_PARAM_Route, 0, routePod);
+    if (routePod != nullptr) {
+      pw_node_set_param(nd.proxy, SPA_PARAM_Route, 0, routePod);
+    } else {
+      kLog.warn("setNodeMuted: failed to build route pod for id={}", id);
+    }
   }
 
   std::uint8_t buffer[256];
@@ -2343,7 +2395,11 @@ void PipeWireService::setNodeMuted(std::uint32_t id, bool muted) {
   }
   auto* pod = static_cast<spa_pod*>(spa_pod_builder_pop(&builder, &frame));
 
-  pw_node_set_param(nd.proxy, SPA_PARAM_Props, 0, pod);
+  if (pod != nullptr) {
+    pw_node_set_param(nd.proxy, SPA_PARAM_Props, 0, pod);
+  } else {
+    kLog.warn("setNodeMuted: failed to build props pod for id={}", id);
+  }
 
   const bool before = nd.muted;
   nd.swMute = muted;
@@ -2362,6 +2418,7 @@ void PipeWireService::setNodeMuted(std::uint32_t id, bool muted) {
     }
     rebuildState();
   }
+  kLog.debug("setNodeMuted: completed for node id={}", id);
 }
 
 void PipeWireService::setSinkVolume(std::uint32_t id, float volume) {
@@ -2465,7 +2522,10 @@ void PipeWireService::emitVolumePreview(bool isInput, std::uint32_t id, float vo
 
 void PipeWireService::emitChanged() {
   if (m_changeCallback) {
+    kLog.debug("PipeWireService: emitChanged() called, firing change callback");
     m_changeCallback();
+  } else {
+    kLog.debug("PipeWireService: emitChanged() called, but no change callback set");
   }
 }
 

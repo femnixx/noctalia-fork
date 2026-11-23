@@ -34,6 +34,7 @@ public:
   struct DropdownCallbacks {
     std::function<void(std::size_t index)> onSelect;
     std::function<void()> onDismiss;
+    std::function<void()> onOpen;
   };
 
   virtual void openSelectDropdown(const DropdownRequest& request, DropdownCallbacks callbacks) = 0;

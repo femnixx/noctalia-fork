@@ -77,6 +77,9 @@ void SelectDropdownPopup::openSelectDropdown(const DropdownRequest& request, Dro
       onDismiss();
     }
   });
+  if (callbacks.onOpen) {
+    callbacks.onOpen();
+  }
 
   // The menu row font is kMenuFontSize == fontSizeCaption, so scaling by fontSize/fontSizeCaption
   // renders options at exactly the requested (pre-scaled) font size, with row metrics to match.

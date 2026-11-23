@@ -83,6 +83,9 @@ const std::unordered_map<std::string, std::string_view> kAliases = {
     {"suspend", "player-pause"},
     {"hibernate", "zzz"},
 
+    // Media
+    {"music", "music"},
+
     // Night light / dark mode
     {"nightlight-on", "moon"},
     {"nightlight-off", "moon-off"},
