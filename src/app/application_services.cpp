@@ -8,6 +8,7 @@
 #include "core/deferred_call.h"
 #include "core/input/keybind_matcher.h"
 #include "core/log.h"
+#include <cstdlib>
 #include "dbus/accounts/accounts_service.h"
 #include "dbus/bluetooth/bluetooth_agent.h"
 #include "dbus/bluetooth/bluetooth_service.h"
@@ -866,6 +867,11 @@ void Application::initStyleThemeAndWayland() {
   auto* sharedGlPtr = m_glShared.hasSharedContext() ? &m_glShared : nullptr;
   m_sharedTextureCache.initialize(sharedGlPtr);
   m_asyncTextureCache.initialize(sharedGlPtr);
+  m_lyricsService = std::make_unique<noctalia::services::LyricsService>();
+  // Set lyrics cache directory
+  const char* xdgCacheHome = getenv("XDG_CACHE_HOME");
+  std::string cacheBase = xdgCacheHome ? xdgCacheHome : (std::string(getenv("HOME")) + "/.cache");
+  m_lyricsService->setCacheDir(cacheBase + "/noctalia/lyrics");
   m_wayland.setTextInputService(&m_textInputService);
   m_wayland.extension<ClipboardGlobals>().setVirtualKeyboardService(&m_virtualKeyboardService);
 

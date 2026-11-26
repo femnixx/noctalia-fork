@@ -918,6 +918,8 @@ void Application::initBarDockAndLayout() {
       .fileWatcher = &m_fileWatcher,
       .screenshots = &m_screenshotService,
       .scriptApi = &m_scriptApi,
+      .asyncTextures = &m_asyncTextureCache,
+      .lyrics = m_lyricsService.get(),
   });
   m_idleInhibitor.setAnchorSurfacesProvider([this] { return m_bar.caffeineAnchorSurfaces(); });
   m_panelManager.setOpenWidgetSettingsCallback([this](std::string barName, std::string widgetName) {

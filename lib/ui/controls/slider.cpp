@@ -240,6 +240,18 @@ void Slider::setControlHeight(float height) {
 
 void Slider::setWheelAdjustEnabled(bool enabled) { m_wheelAdjustEnabled = enabled; }
 
+void Slider::setFillColor(const ColorSpec& color) {
+  m_fillColor = color;
+  applyVisualState();
+  markPaintDirty();
+}
+
+void Slider::setTrackColor(const ColorSpec& color) {
+  m_trackColor = color;
+  applyVisualState();
+  markPaintDirty();
+}
+
 void Slider::setOnValueChanged(std::function<void(double)> callback) { m_onValueChanged = std::move(callback); }
 
 void Slider::setOnDragEnd(std::function<void()> callback) { m_onDragEnd = std::move(callback); }
@@ -306,8 +318,9 @@ void Slider::applyVisualState() {
   const bool pressing = m_inputArea != nullptr && m_inputArea->pressed();
   const bool focused = m_inputArea != nullptr && m_inputArea->focused();
 
-  Color trackColor = resolved(ColorRole::OutlineVariant);
-  Color fillColor = resolved(ColorRole::Primary);
+  // Use custom colors if set (role has value), otherwise fall back to defaults
+  Color trackColor = m_trackColor.role.has_value() ? resolveColorSpec(m_trackColor) : resolved(ColorRole::OutlineVariant);
+  Color fillColor = m_fillColor.role.has_value() ? resolveColorSpec(m_fillColor) : resolved(ColorRole::Primary);
   Color thumbColor = resolved(ColorRole::OnPrimary);
   Color thumbBorder = resolved(ColorRole::OutlineVariant);
 
@@ -315,9 +328,9 @@ void Slider::applyVisualState() {
 
   if (!m_enabled) {
     trackColor = resolved(ColorRole::OutlineVariant, Style::disabledOutlineAlpha);
-    fillColor = resolved(ColorRole::Primary, 0.5F);
+    fillColor = m_fillColor.role.has_value() ? resolveColorSpec(scaleAlpha(m_fillColor, 0.5F)) : resolved(ColorRole::Primary, 0.5F);
   } else if (pressing) {
-    fillColor = resolved(ColorRole::Primary);
+    fillColor = m_fillColor.role.has_value() ? resolveColorSpec(m_fillColor) : resolved(ColorRole::Primary);
   } else if (focused) {
     thumbBorder = resolveColorSpec(focusRingColorSpec());
   } else if (hovering) {

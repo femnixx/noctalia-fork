@@ -39,6 +39,11 @@ class INetworkService;
 class BluetoothService;
 class NotificationManager;
 class IdleInhibitor;
+class PipeWireSpectrum;
+class Input;
+namespace noctalia::services {
+  class LyricsService;
+}
 
 struct BarCapsuleRun {
   Node* shell = nullptr;
@@ -181,9 +186,11 @@ struct BarInstance {
   Image* notchAlbumArt = nullptr;             // Album art thumbnail (20x20, radius 5)
   Glyph* notchFallbackGlyph = nullptr;        // Fallback music glyph when no media active
   std::vector<Box*> notchVisualizerBars;      // 5 animated visualizer bars
-  AnimationManager::Id notchVisualizerAnimId = 0; // Visualizer pulse animation
+  Label* notchCollapsedMediaTrack = nullptr;  // Title + Artist label with marquee (collapsed pill)
+  std::uint64_t notchSpectrumListenerId = 0;  // PipeWire spectrum listener ID for visualizer
   bool notchMediaPlaying = false;             // Current MPRIS playback state
-  std::string notchLastArtUrl;                // Last loaded album art URL (avoid reload)
+  std::string notchLastArtUrl;                // Last loaded album art URL (collapsed pill)
+  std::string notchLastMediaArtUrl;           // Last loaded album art URL (expanded media card)
 
   // Concave "fang" fillets at top-left and top-right (concave inverse-rounded corners)
   // Removed: true concave corner cutouts not supported by current renderer (would render as floating circles)
@@ -194,8 +201,10 @@ struct BarInstance {
   Node* notchBentoRoot = nullptr;             // Root for expanded Bento grid (inside contentClip)
   // Top Header Bar: horizontal tab pills (Home, Media, Clipboard, Notifications, Files)
   Flex* notchHeaderTabs = nullptr;
-  std::vector<Button*> notchTabPills;
+  std::vector<Node*> notchTabPills;  // Can hold both Button* (inactive) and Flex* (active)
   std::size_t notchTabIndex = 0;              // Active tab index
+  // Tab content panels (one per tab, show/hide based on notchTabIndex)
+  std::vector<Flex*> notchTabContents;
   // Header status: Date & Time + Battery %
   Label* notchHeaderDateTime = nullptr;
   Label* notchHeaderBattery = nullptr;
@@ -208,22 +217,38 @@ struct BarInstance {
   bool notchPinned = false;                   // Pin state - prevents auto-collapse when true
   // Main 4-Column Horizontal Bento Grid (y = 46px to bottom)
   Flex* notchBentoGrid = nullptr;
-  // Column 1 (~22%): Clock, Date & System Info Card
+  // Column 1 (~22%): Clock, Date & Weather Card
   Flex* notchClockCard = nullptr;
   Label* notchTimeLabel = nullptr;
   Label* notchDateLabel = nullptr;
-  Label* notchSystemInfoLabel = nullptr;
+  Label* notchWeatherIcon = nullptr;
+  Label* notchWeatherTemp = nullptr;
+  Label* notchWeatherCondition = nullptr;
+  Label* notchWeatherHighLow = nullptr;
+  Label* notchWeatherLocation = nullptr;
   // Column 2 (~34%): Full MPRIS Media Player Card
   Flex* notchMediaCard = nullptr;
   Image* notchMediaArt = nullptr;
   Glyph* notchMediaArtFallback = nullptr;
-  Label* notchMediaTrack = nullptr;
+  Label* notchMediaTrack = nullptr;  // Combined "Title - Artist" with marquee
   Label* notchMediaArtist = nullptr;
-  Label* notchMediaProgress = nullptr;
-  ProgressBar* notchMediaProgressBar = nullptr;  // Animated progress scrubber
+  Label* notchMediaDeviceId = nullptr;
   Button* notchMediaPrev = nullptr;
   Button* notchMediaPlayPause = nullptr;
   Button* notchMediaNext = nullptr;
+  // Progress bar dots container
+  Flex* notchMediaProgressDots = nullptr;
+  std::vector<Box*> notchMediaProgressDotBoxes;
+  // Media volume slider
+  Slider* notchMediaVolumeSlider = nullptr;
+  Label* notchMediaVolumeLabel = nullptr;
+  // Lyrics panel (Music tab only)
+  Flex* notchLyricsPanel = nullptr;
+  std::vector<Label*> notchLyricLines;
+  std::vector<std::pair<std::int64_t, std::string>> notchCurrentLyrics;  // {timestampUs, text}
+  std::size_t notchActiveLyricIndex = 0;
+  bool notchLyricsLoading = false;
+  std::string notchLyricsCacheKey;
   // Column 3 (~24%): Stacked Volume & Brightness Cards
   Flex* notchVolumeCard = nullptr;
   Flex* notchMicCard = nullptr;
@@ -250,24 +275,39 @@ struct BarInstance {
   bool notchDropdownOpen = false;
   Slider* notchBrightnessSlider = nullptr;
   Label* notchBrightnessLabel = nullptr;
-  // Column 4 (~20%): 2x2 Quick Toggle Tiles (Wi-Fi, Bluetooth, DND, Caffeine)
-  GridView* notchToggleGrid = nullptr;
-  Button* notchWifiToggle = nullptr;
-  Button* notchBluetoothToggle = nullptr;
-  Button* notchDndToggle = nullptr;
-  Button* notchCaffeineToggle = nullptr;
+  // Column 4 (~20%): Bluetooth Device Manager
+  Flex* notchBluetoothCard = nullptr;
+  Label* notchBluetoothHeader = nullptr;
+  Button* notchBluetoothRefresh = nullptr;
+  Button* notchBluetoothSettings = nullptr;
+  Label* notchBluetoothStatus = nullptr;
+  Flex* notchBluetoothDeviceList = nullptr;
   // Toggle tile labels for color updates
   Label* notchWifiLabel = nullptr;
   Label* notchBluetoothLabel = nullptr;
   Label* notchDndLabel = nullptr;
   Label* notchCaffeineLabel = nullptr;
 
+  // App Launcher (Search sub-tool)
+  Flex* notchAppLauncherTab = nullptr;
+  Input* notchAppLauncherSearchInput = nullptr;
+  Flex* notchAppLauncherCategoryRow = nullptr;
+  std::vector<Button*> notchAppLauncherCategories;
+  std::size_t notchAppLauncherCategory = 0;
+  Flex* notchAppLauncherAppList = nullptr;
+  std::vector<Button*> notchAppLauncherApps;
+
+  // Sub-navigation tool index (Search, Calendar, Audio, Bluetooth, etc.)
+  std::size_t notchSubToolIndex = 0;  // 0 = Search, 1 = Calendar, etc.
+
   // Service pointers for interactivity (set during initNotchScene)
   MprisService* m_mpris = nullptr;
   PipeWireService* m_audio = nullptr;
+  PipeWireSpectrum* m_audioSpectrum = nullptr;
   BrightnessService* m_brightness = nullptr;
   INetworkService* m_network = nullptr;
   BluetoothService* m_bluetooth = nullptr;
   NotificationManager* m_notifications = nullptr;
   IdleInhibitor* m_idleInhibitor = nullptr;
+  class noctalia::services::LyricsService* m_lyricsService = nullptr;
 };

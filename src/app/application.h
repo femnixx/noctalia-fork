@@ -32,6 +32,7 @@
 #include "notification/notification_manager.h"
 #include "render/codecs/thumbnail_service.h"
 #include "render/core/async_texture_cache.h"
+#include "services/lyrics_service.h"
 #include "render/core/shared_texture_cache.h"
 #include "render/gl_shared_context.h"
 #include "render/render_context.h"
@@ -354,6 +355,8 @@ private:
   RenderContext m_renderContext;
   // Image controls in panels retain cache-backed handles during teardown.
   AsyncTextureCache m_asyncTextureCache;
+  // Lyrics fetching service for MPRIS media
+  std::unique_ptr<noctalia::services::LyricsService> m_lyricsService;
   // Outlives the panels, widgets, and layers whose pixel stream views register with it.
   PixelStreamService m_pixelStreamService;
   ThumbnailService m_thumbnailService;

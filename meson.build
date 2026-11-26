@@ -495,6 +495,7 @@ _noctalia_sources = files(
   'src/dbus/modem/modem_manager_service.cpp',
   'src/dbus/mpris/mpris_art.cpp',
   'src/dbus/mpris/mpris_service.cpp',
+  'src/services/lyrics_service.cpp',
   'src/dbus/network/external_ip_service.cpp',
   'src/dbus/network/inetwork_service.cpp',
   'src/dbus/network/iwd_diagnostics.cpp',

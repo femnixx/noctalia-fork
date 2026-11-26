@@ -18,8 +18,12 @@ public:
   void setEnabled(bool enabled);
   void setTrackHeight(float height);
   void setThumbSize(float size);
-  void setControlHeight(float height);
+void setControlHeight(float height);
   void setWheelAdjustEnabled(bool enabled);
+
+  void setFillColor(const ColorSpec& color);
+  void setTrackColor(const ColorSpec& color);
+
   void setOnValueChanged(std::function<void(double)> callback);
   void setOnDragEnd(std::function<void()> callback);
   void setOnDragStart(std::function<void()> callback);
@@ -48,6 +52,9 @@ private:
   std::function<void(double)> m_onValueChanged;
   std::function<void()> m_onDragEnd;
   std::function<void()> m_onDragStart;
+
+  ColorSpec m_fillColor = clearColorSpec();
+  ColorSpec m_trackColor = clearColorSpec();
 
   double m_min = 0.0;
   double m_max = 100.0;

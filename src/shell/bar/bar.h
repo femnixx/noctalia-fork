@@ -168,8 +168,6 @@ private:
   void updateNotchInputRegion(BarInstance& instance, float pillX, float pillY, float pillW, float pillH);
   bool isFullscreenFocused(wl_output* output) const;
   void triggerNotchExpand(BarInstance& instance);
-  void startNotchVisualizerAnimation(BarInstance& instance);
-  void stopNotchVisualizerAnimation(BarInstance& instance);
   void initNotchScene(BarInstance& instance, std::uint32_t width, std::uint32_t height);
   void updateNotchGeometry(BarInstance& instance, std::uint32_t width, std::uint32_t height);
   void layoutNotchWidgets(BarInstance& instance, Renderer& renderer, float pillX, float pillY, float pillW, float pillH, float progress);
@@ -224,6 +222,8 @@ private:
   ScreenshotService* m_screenshots = nullptr;
   FileWatcher* m_fileWatcher = nullptr;
   scripting::ScriptApiContext* m_scriptApi = nullptr;
+  class AsyncTextureCache* m_asyncTextures = nullptr;
+  class noctalia::services::LyricsService* m_lyricsService = nullptr;
   std::unique_ptr<WidgetFactory> m_widgetFactory;
   std::vector<std::unique_ptr<BarInstance>> m_instances;
   // Wall-clock minute of the last full second-tick update, so minute-changing

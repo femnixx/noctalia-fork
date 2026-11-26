@@ -1,5 +1,6 @@
 #pragma once
 
+class AsyncTextureCache;
 class BluetoothService;
 class BrightnessService;
 class ClipboardService;
@@ -12,6 +13,7 @@ class HttpClient;
 class IdleInhibitor;
 class INetworkService;
 class LockKeysService;
+class LyricsService;
 class ModemManagerService;
 class MprisService;
 class NotificationManager;
@@ -26,6 +28,9 @@ class UPowerService;
 class WeatherService;
 class GammaService;
 
+namespace noctalia::services {
+  class LyricsService;
+}
 namespace noctalia::theme {
   class ThemeService;
 }
@@ -61,4 +66,6 @@ struct BarServices {
   FileWatcher* fileWatcher = nullptr;
   ScreenshotService* screenshots = nullptr;
   scripting::ScriptApiContext* scriptApi = nullptr;
+  AsyncTextureCache* asyncTextures = nullptr;
+  noctalia::services::LyricsService* lyrics = nullptr;
 };
