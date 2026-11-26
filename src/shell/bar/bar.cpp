@@ -2730,7 +2730,8 @@ auto surfaceConfig = LayerSurfaceConfig{
       .marginRight = surfaceSpec.marginRight,
       .marginBottom = surfaceSpec.marginBottom,
       .marginLeft = surfaceSpec.marginLeft,
-      .keyboard = isNotchMode ? LayerShellKeyboard::OnDemand : LayerShellKeyboard::None,
+      // Fix 2: Start with None when collapsed to prevent focus stealing
+      .keyboard = isNotchMode ? LayerShellKeyboard::None : LayerShellKeyboard::None,
       .defaultWidth = 1920,
       .defaultHeight = surfaceSpec.surfaceHeight,
       .prewarmBlur = barConfig.compositorBlur,
@@ -3894,7 +3895,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
   );
   static_cast<Glyph*>(batteryRow->addChild(
       ui::glyph({
-          .glyph = "battery-charging-2",  // Maps to "battery-plugged" in glyph registry
+          .glyph = "battery-charging",  // Standard Nerd Font charging battery
           .glyphSize = 18.0F * contentScale,
           .color = colorSpecFromRole(ColorRole::Primary),  // Emerald green #10B981
       })
@@ -3966,8 +3967,8 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       {"volume", "Volume Mixer", 2, false},
       {"bluetooth", "Bluetooth", 3, false},
       {"activity", "Activity Monitor", 4, false},
-      {"sliders-h", "Command Launcher", 5, false},
-      {"cog", "Module Settings", 6, false},
+      {"sliders-horizontal", "Command Launcher", 5, false},
+      {"settings", "Module Settings", 6, false},
   }};
 
   std::vector<InputArea*> subNavToolClickAreas;
@@ -4128,7 +4129,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
   ));
   instance.notchWeatherCondition = static_cast<Label*>(weatherSection->addChild(
       ui::label({
-          .text = "24° Mostly clear",
+          .text = "Mostly clear",
           .fontSize = 13.0F * contentScale,
           .fontWeight = FontWeight::Bold,
           .color = colorSpecFromRole(ColorRole::OnSurface),
@@ -4339,6 +4340,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
           .flexGrow = 1.0F,  // Equal height
       })
   ));
+  // Right padding handled by label minWidth
   styleCard(*instance.notchVolumeCard);
   instance.notchVolumeCard->setFillHeight(true);
 
@@ -4502,6 +4504,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
       ui::label({
           .text = "BLUETOOTH", .fontSize = 11.0F * contentScale,
           .fontWeight = FontWeight::Medium, .color = colorSpecFromRole(ColorRole::OnSurfaceVariant),
+          .maxWidth = 80.0F * contentScale,  // Constrain width to allow truncation
           .maxLines = 1,
           .ellipsize = TextEllipsize::End,
       })
@@ -4511,7 +4514,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
   btHeader->addChild(ui::spacer());
   instance.notchBluetoothRefresh = static_cast<Button*>(btHeader->addChild(
       ui::button({
-          .text = "", .glyph = "refresh", .glyphSize = 15.0F * contentScale,
+          .text = "", .glyph = "refresh-cw", .glyphSize = 15.0F * contentScale,
           .controlHeight = 28.0F * contentScale, .variant = ButtonVariant::Ghost,
           .radius = 14.0F * contentScale,
           .onClick = [&instance]() { if (instance.m_bluetooth) instance.m_bluetooth->refresh(); },
@@ -4519,7 +4522,7 @@ static void buildNotchBentoLayout(BarInstance& instance, [[maybe_unused]] Render
   ));
   instance.notchBluetoothSettings = static_cast<Button*>(btHeader->addChild(
       ui::button({
-          .text = "", .glyph = "cog", .glyphSize = 15.0F * contentScale,
+          .text = "", .glyph = "settings", .glyphSize = 15.0F * contentScale,
           .controlHeight = 28.0F * contentScale, .variant = ButtonVariant::Ghost,
           .radius = 14.0F * contentScale,
       })
@@ -5720,7 +5723,9 @@ void Bar::prepareNotchFrame(BarInstance& instance, bool needsUpdate, bool /*need
       if (instance.notchCollapsedContainer != nullptr) {
         instance.notchCollapsedContainer->setVisible(collapsed || collapsedOpacity > 0.0F);
         instance.notchCollapsedContainer->setOpacity(collapsedOpacity);
-        instance.notchCollapsedContainer->setPosition(0.0F, 0.0F);
+        // Position at top margin to account for screen edge spacing
+        const float topMargin = static_cast<float>(instance.barConfig.notchTopMargin);
+        instance.notchCollapsedContainer->setPosition(0.0F, topMargin);
         instance.notchCollapsedContainer->setSize(pillW, pillH);
       }
 
@@ -6437,6 +6442,14 @@ instance.notchAnimationId = instance.animations.animate(
           // Keep exclusiveZone = thickness for notch mode so surface receives pointer events even during animation
           // Surface remains at FIXED expanded size; pill animates internally via layout/input region
           instance.surface->setExclusiveZone(static_cast<std::uint32_t>(instance.barConfig.thickness));
+          
+          // Fix 2: Dynamic keyboard interactivity - OnDemand when expanded, None when collapsed
+          // Switch at midpoint of animation to prevent focus stealing when collapsed
+          if (progress > 0.5F && instance.surface->keyboardInteractivity() != LayerShellKeyboard::OnDemand) {
+            instance.surface->setKeyboardInteractivity(LayerShellKeyboard::OnDemand);
+          } else if (progress <= 0.5F && instance.surface->keyboardInteractivity() != LayerShellKeyboard::None) {
+            instance.surface->setKeyboardInteractivity(LayerShellKeyboard::None);
+          }
         }
         // Update input region every frame to match exact pill rect
         if (instance.surface != nullptr) {
